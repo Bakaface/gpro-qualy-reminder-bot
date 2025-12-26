@@ -1,0 +1,32 @@
+# Secrets
+.env
+*.pem
+*.key
+TELEGRAM_BOT_TOKEN
+GPRO_API_TOKEN
+
+# Data/Caches
+gpro_calendar.json
+users_data.json
+*.log
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+env/
+.venv/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# backups
+*.bak*
