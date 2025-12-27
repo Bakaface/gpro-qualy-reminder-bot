@@ -81,7 +81,7 @@ gpro-bot/
 ├── config.py           # Load .env
 ├── requirements.txt
 ├── .env.example		 # Rename to .env and fill in your data
-└── users_data.json     # User settings (auto)
+├── users_data.json     # User settings (auto)
 └── gpro_calendar.json  # Calendar downloaded after using /update (auto)
 ```
 
@@ -134,11 +134,11 @@ Uses GPRO public calendar API:
 GET https://gpro.net/gb/backend/api/v2/Calendar
 ```
 
-Caches results in `gpro_calendar.json`. No authentication required.
+Caches results in `gpro_calendar.json`. No authentication required (only API key).
 
 
 ## License
-**[Unlicense](UNLICENSE)** - Free software, public domain. Use freely! ✨
+***Unlicense** - Free software, public domain. Use freely! ✨
 This is free and unencumbered software released into the public domain.
 
 Anyone is free to copy, modify, publish, use, compile, sell, or distribute this
