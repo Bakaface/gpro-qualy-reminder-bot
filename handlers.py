@@ -1,12 +1,13 @@
 import asyncio
 import logging
 import math
+import os  # ← ADDED for next season file checks
 from aiogram import Router, F
 from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.filters import Command
 from datetime import datetime
-from gpro_calendar import race_calendar, get_races_closing_soon
-from notifications import get_user_status, mark_quali_done
+from gpro_calendar import race_calendar, next_season_calendar, get_races_closing_soon, update_calendar_secret  # ← ADDED next_season_calendar
+from notifications import get_user_status, mark_quali_done, reset_user_status
 
 logger = logging.getLogger(__name__)
 router = Router()
@@ -40,28 +41,20 @@ def format_time_until_quali(quali_close):
     else:
         return ""
 
-def format_full_calendar():
-    """Races #1-#17 sequential order with 🔥 on next future race"""
-    if not race_calendar:
+def format_full_calendar(calendar_data, title="Full Season"):
+    """Generic formatter for current/next season - Races #1-#17 sequential"""
+    if not calendar_data:
         return "No races scheduled"
     
     now = datetime.now()
     race_list = []
     
-    # Collect races 1-17 in sequential order (regardless of dict keys)
-    if isinstance(race_calendar, dict):
+    # Collect races 1-17 in sequential order
+    if isinstance(calendar_data, dict):
         for race_id in range(1, 18):  # Force 1-17 order
-            if race_id in race_calendar and isinstance(race_calendar[race_id], dict):
-                race_data = race_calendar[race_id].copy()
+            if race_id in calendar_data and isinstance(calendar_data[race_id], dict):
+                race_data = calendar_data[race_id].copy()
                 race_data['race_id'] = race_id
-                race_list.append(race_data)
-    else:
-        # List format - take first 17
-        for i in range(min(17, len(race_calendar))):
-            race_data = race_calendar[i]
-            if isinstance(race_data, dict):
-                race_data = race_data.copy()
-                race_data['race_id'] = i + 1
                 race_list.append(race_data)
     
     # Find next race (first with future quali)
@@ -107,7 +100,7 @@ async def cmd_start(message: Message):
     else:
         logger.debug(f"👤 Existing user {user_id} used /start")
     
-    await message.answer("🏁 GPRO Bot LIVE!\n/status - Next race\n/calendar - Full season\n/notify - Test alert")
+    await message.answer("🏁 GPRO Bot LIVE!\n/status - Next race\n/calendar - Full season\n/next - Next season\n/notify - Test alert")
 
 @router.message(Command("status"))
 async def cmd_status(message: Message):
@@ -175,8 +168,23 @@ async def cmd_notify(message: Message, bot):
 
 @router.message(Command("calendar"))
 async def cmd_calendar(message: Message):
-    calendar_text = format_full_calendar()
+    calendar_text = format_full_calendar(race_calendar, "Full Season")  # ← UPDATED
     text = f"🏁 **Full Season**\n\n{calendar_text}"
+    await message.answer(text, parse_mode='Markdown')
+
+@router.message(Command("next"))  # ← NEW COMMAND
+async def cmd_next(message: Message):
+    from gpro_calendar import next_season_calendar, NEXT_SEASON_FILE, load_next_season_silent
+    
+    # Try load from cache first
+    await load_next_season_silent()
+    
+    if not next_season_calendar:
+        await message.answer("🌟 **Next season not published yet**")
+        return
+    
+    calendar_text = format_full_calendar(next_season_calendar, "Next Season")
+    text = f"🌟 **NEXT SEASON** ({len(next_season_calendar)} races)\n\n{calendar_text}"
     await message.answer(text, parse_mode='Markdown')
 
 @router.message(Command("schedule"))
@@ -186,25 +194,38 @@ async def cmd_schedule(message: Message):
 @router.message(Command("update"))
 async def cmd_update(message: Message):
     from config import ADMIN_USER_ID
+    from notifications import users_data, reset_user_status
+    from gpro_calendar import next_season_calendar
+
     if message.from_user.id != ADMIN_USER_ID:
         await message.answer("❌ Admin only")
         return
-    
-    from gpro_calendar import update_calendar_secret
-    from notifications import users_data, reset_user_status
-    
+
     await update_calendar_secret()
-    
+
     reset_count = 0
     for user_id in list(users_data.keys()):
         reset_user_status(user_id)
         reset_count += 1
-    
+
+    # Current season status
     await message.answer(
         f"✅ **Calendar**: {len(race_calendar)} races\n"
         f"🔄 **{reset_count} users** reset",
-        parse_mode='Markdown'
+        parse_mode="Markdown",
     )
+
+    # Next season status (no file-removed text)
+    if next_season_calendar:
+        await message.answer(
+            f"🌟 **Next season ready!** {len(next_season_calendar)} races\nUse /next to view",
+            parse_mode="Markdown",
+        )
+    else:
+        await message.answer(
+            "ℹ️ **Next season not published**",
+            parse_mode="Markdown",
+        )
 
 @router.message(Command("users"))
 async def cmd_users(message: Message):
@@ -247,9 +268,8 @@ async def handle_quali_done(callback: CallbackQuery):
 
 @router.callback_query(F.data == "reset_all")
 async def reset_all(callback: CallbackQuery):
-    from notifications import reset_user_status
     reset_user_status(callback.from_user.id)
     await callback.message.edit_text(callback.message.text + "\n\n🔄 *Notifications reset!*")
     await callback.answer("🔄 Reset!")
 
-logger.info("✅ handlers.py loaded - Aiogram 3.x Router ready")
+logger.info("✅ handlers.py loaded - Aiogram 3.x Router ready (/next added)")

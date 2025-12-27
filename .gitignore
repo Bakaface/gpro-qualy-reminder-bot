@@ -6,8 +6,7 @@ TELEGRAM_BOT_TOKEN
 GPRO_API_TOKEN
 
 # Data/Caches
-gpro_calendar.json
-users_data.json
+*.json
 *.log
 
 # Python
