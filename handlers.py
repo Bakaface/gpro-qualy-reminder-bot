@@ -6,11 +6,58 @@ from aiogram import Router, F
 from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.filters import Command
 from datetime import datetime
-from gpro_calendar import race_calendar, next_season_calendar, get_races_closing_soon, update_calendar_secret  # ← ADDED next_season_calendar
+from gpro_calendar import race_calendar, next_season_calendar, get_races_closing_soon, update_calendar
 from notifications import get_user_status, mark_quali_done, reset_user_status
 
 logger = logging.getLogger(__name__)
 router = Router()
+
+
+def format_full_calendar(calendar_data, title="Full Season", is_current_season=True):
+    """Generic formatter for current/next season"""
+    if not calendar_data:
+        return "No races scheduled"
+    
+    now = datetime.now()
+    race_list = []
+    
+    # Collect races 1-17 in sequential order
+    if isinstance(calendar_data, dict):
+        for race_id in range(1, 18):
+            if race_id in calendar_data and isinstance(calendar_data[race_id], dict):
+                race_data = calendar_data[race_id].copy()
+                race_data['race_id'] = race_id
+                race_list.append(race_data)
+    
+    # 🔥 Next race ТОЛЬКО для current season
+    next_race_id = None
+    if is_current_season:
+        for race in race_list:
+            if race.get('quali_close', now) > now:
+                next_race_id = race['race_id']
+                break
+    
+    text = ""
+    for race in race_list:
+        track = race.get('track', f'Race {race["race_id"]}')
+        race_date = race.get('date', now)
+        quali_close = race.get('quali_close', now)
+        race_id = race['race_id']
+        
+        date_str = race_date.strftime("%a %d.%m")
+        time_text = format_time_until_quali(quali_close)
+        
+        time_info = date_str
+        if time_text:
+            time_info += f" • {time_text}"
+        
+        # 🔥 ONLY для current season next race
+        if next_race_id and race_id == next_race_id:
+            text += f"🔥 **#{race_id} {track}** - {time_info}\n"
+        else:
+            text += f"**#{race_id} {track}** - {time_info}\n"
+    
+    return text.rstrip()
 
 def format_race_beautiful(race_data):
     if not race_data: return "None"
@@ -25,23 +72,44 @@ def format_race_beautiful(race_data):
     return f"Qualification closes in {hours_display}h\n**({deadline})** - {track}"
 
 def format_time_until_quali(quali_close):
-    """Time remaining until quali deadline"""
+    """Time remaining until quali deadline - human friendly"""
     now = datetime.now()
     delta = quali_close - now
     
-    total_hours = delta.total_seconds() / 3600
-    if total_hours > 72:
+    total_minutes = delta.total_seconds() / 60
+    if total_minutes <= 0:
+        return ""
+    
+    total_hours = total_minutes / 60
+    total_days = total_hours / 24
+    
+    if total_minutes < 100:  # Less than 100 minutes → show minutes or H:M
+        hours = math.floor(total_minutes / 60)
+        minutes = math.floor(total_minutes % 60)
+        if hours > 0:
+            return f"{hours}h{minutes}m"  # "2h45m"
+        else:
+            return f"{minutes}m"         # "45m"
+    elif total_days >= 30:   # 30+ days → months + days
+        months = math.floor(total_days / 30)
+        remaining_days = math.floor(total_days % 30)
+        if remaining_days > 0:
+            return f"{months}mo {remaining_days}d"  # "1m 5d"
+        else:
+            return f"{months}mo"                   # "1m"
+    elif total_hours >= 120:  # 5+ days → just days
         days = math.floor(total_hours / 24)
         return f"{days}d"
-    elif total_hours > 36:
-        return "Tomorrow"
-    elif total_hours > 0:
-        hours = math.floor(total_hours)
-        return f"{hours}h"
+    elif total_hours >= 24:   # 1+ day → "1d 14h"
+        days = math.floor(total_hours / 24)
+        remaining_hours = math.floor(total_hours % 24)
+        if remaining_hours > 0:
+            return f"{days}d {remaining_hours}h"  # "1d 14h"
+        else:
+            return f"{days}d"                   # "1d"
     else:
-        return ""
-
-def format_full_calendar(calendar_data, title="Full Season"):
+        hours = math.floor(total_hours)
+        return f"{hours}h"  # "23h"
     """Generic formatter for current/next season - Races #1-#17 sequential"""
     if not calendar_data:
         return "No races scheduled"
@@ -168,22 +236,21 @@ async def cmd_notify(message: Message, bot):
 
 @router.message(Command("calendar"))
 async def cmd_calendar(message: Message):
-    calendar_text = format_full_calendar(race_calendar, "Full Season")  # ← UPDATED
+    calendar_text = format_full_calendar(race_calendar, "Full Season", is_current_season=True)
     text = f"🏁 **Full Season**\n\n{calendar_text}"
     await message.answer(text, parse_mode='Markdown')
 
-@router.message(Command("next"))  # ← NEW COMMAND
+@router.message(Command("next"))
 async def cmd_next(message: Message):
-    from gpro_calendar import next_season_calendar, NEXT_SEASON_FILE, load_next_season_silent
+    from gpro_calendar import next_season_calendar, load_next_season_silent
     
-    # Try load from cache first
     await load_next_season_silent()
     
     if not next_season_calendar:
         await message.answer("🌟 **Next season not published yet**")
         return
     
-    calendar_text = format_full_calendar(next_season_calendar, "Next Season")
+    calendar_text = format_full_calendar(next_season_calendar, "Next Season", is_current_season=False)
     text = f"🌟 **NEXT SEASON** ({len(next_season_calendar)} races)\n\n{calendar_text}"
     await message.answer(text, parse_mode='Markdown')
 
@@ -201,7 +268,7 @@ async def cmd_update(message: Message):
         await message.answer("❌ Admin only")
         return
 
-    await update_calendar_secret()
+    await update_calendar()
 
     reset_count = 0
     for user_id in list(users_data.keys()):

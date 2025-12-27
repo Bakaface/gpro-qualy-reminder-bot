@@ -13,6 +13,24 @@ logger = logging.getLogger(__name__)
 race_calendar = {}
 next_season_calendar = {}
 
+
+def get_true_next_race_id():
+    """Find TRUE next race ID across both seasons"""
+    from handlers import race_calendar, next_season_calendar
+    now = datetime.now()
+    
+    # 1. Current season first
+    for race_id in range(1, 18):
+        if race_id in race_calendar and race_calendar[race_id].get('quali_close', now) > now:
+            return race_id
+    
+    # 2. Next season if current finished
+    for race_id in range(1, 18):
+        if race_id in next_season_calendar and next_season_calendar[race_id].get('quali_close', now) > now:
+            return race_id
+    
+    return None
+
 async def load_calendar_silent() -> bool:
     """Load from cache ONLY - no API calls"""
     try:
@@ -64,8 +82,8 @@ async def load_next_season_silent() -> bool:
         logger.error(f"Next season cache load error: {e}")
         return False
 
-async def update_calendar_secret() -> bool:
-    """SECRET API update - /calendar only"""
+async def update_calendar() -> bool:
+    """Update calendar from GPRO API - /update command"""
     if not GPRO_API_TOKEN:
         logger.error("❌ GPRO_API_TOKEN missing")
         return False
@@ -77,7 +95,7 @@ async def update_calendar_secret() -> bool:
     }
     
     try:
-        logger.info("🔄 Secret API update...")
+        logger.info("🔄 Updating calendar from GPRO API...")
         async with aiohttp.ClientSession() as session:
             async with session.get(url, headers=headers) as resp:
                 if resp.status == 200:
@@ -92,11 +110,11 @@ async def update_calendar_secret() -> bool:
                         global race_calendar
                         race_calendar.clear()
                         race_calendar.update(calendar)
-                        logger.info(f"✅ SECRET UPDATE: {len(calendar)} races!")
+                        logger.info(f"✅ CURRENT SEASON: {len(calendar)} races!")
                     else:
                         logger.warning("No valid race events found")
                     
-                    # NEXT SEASON LOGIC - FIXED ✅
+                    # NEXT SEASON LOGIC
                     next_season_published = raw_response.get("nextSeasonPublished", False)
                     logger.info(f"📊 API nextSeasonPublished: {next_season_published}")
                     
@@ -117,19 +135,20 @@ async def update_calendar_secret() -> bool:
                         else:
                             logger.warning("nextSeasonPublished=true but no nextSeasonEvents")
                     else:
-                        # CLEANUP old next season if exists
+                        # FORCE CLEANUP
+                        next_season_calendar.clear()
+                        
                         if os.path.exists(NEXT_SEASON_FILE):
                             os.remove(NEXT_SEASON_FILE)
-                            next_season_calendar.clear()
-                            logger.info("🗑️ Next season file removed - not published")
+                            logger.info("🗑️ Next season file REMOVED - API says not published")
                         else:
-                            logger.info("ℹ️ No next season file to cleanup")
+                            logger.info("ℹ️ No next season file (already clean)")
                     
                     return True
                 else:
                     logger.error(f"API {resp.status}")
     except Exception as e:
-        logger.error(f"Secret update error: {e}")
+        logger.error(f"Calendar update error: {e}")
     
     return False
 
