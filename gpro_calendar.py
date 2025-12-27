@@ -5,12 +5,13 @@ import os
 from datetime import datetime, timedelta
 from typing import Dict
 import aiohttp
-from config import GPRO_API_TOKEN, CALENDAR_FILE, GPRO_LANG
+from config import GPRO_API_TOKEN, CALENDAR_FILE, GPRO_LANG, NEXT_SEASON_FILE
 
 logger = logging.getLogger(__name__)
-race_calendar: Dict[int, Dict] = {}
-next_season_calendar: Dict[int, Dict] = {}
-NEXT_SEASON_FILE = 'next_season_calendar.json'
+
+# Module-level globals
+race_calendar = {}
+next_season_calendar = {}
 
 async def load_calendar_silent() -> bool:
     """Load from cache ONLY - no API calls"""
@@ -82,8 +83,9 @@ async def update_calendar_secret() -> bool:
                 if resp.status == 200:
                     raw_response = await resp.json()
                     
+                    # CURRENT SEASON
                     data = raw_response.get('events', [])
-                    calendar = parse_gpro_events(data)
+                    calendar = parse_gpro_events(data, is_next_season=False)
                     
                     if calendar:
                         save_calendar(calendar)
@@ -91,18 +93,39 @@ async def update_calendar_secret() -> bool:
                         race_calendar.clear()
                         race_calendar.update(calendar)
                         logger.info(f"✅ SECRET UPDATE: {len(calendar)} races!")
-                        
-                        # NEXT SEASON LOGIC (unchanged from previous)
-                        if raw_response.get("nextSeasonPublished"):
-                            # ... [keep existing next season code]
-                            pass
-                        else:
-                            # ... [keep existing cleanup code]
-                            pass
-                        
-                        return True
                     else:
                         logger.warning("No valid race events found")
+                    
+                    # NEXT SEASON LOGIC - FIXED ✅
+                    next_season_published = raw_response.get("nextSeasonPublished", False)
+                    logger.info(f"📊 API nextSeasonPublished: {next_season_published}")
+                    
+                    if next_season_published:
+                        next_events = raw_response.get("nextSeasonEvents", [])
+                        logger.info(f"📊 Found {len(next_events)} nextSeasonEvents")
+                        
+                        if next_events:
+                            next_calendar = parse_gpro_events(next_events, is_next_season=True)
+                            if next_calendar:
+                                save_next_season_calendar(next_calendar)
+                                global next_season_calendar
+                                next_season_calendar.clear()
+                                next_season_calendar.update(next_calendar)
+                                logger.info(f"🌟 NEXT SEASON: {len(next_calendar)} races populated!")
+                            else:
+                                logger.warning("No valid next season events")
+                        else:
+                            logger.warning("nextSeasonPublished=true but no nextSeasonEvents")
+                    else:
+                        # CLEANUP old next season if exists
+                        if os.path.exists(NEXT_SEASON_FILE):
+                            os.remove(NEXT_SEASON_FILE)
+                            next_season_calendar.clear()
+                            logger.info("🗑️ Next season file removed - not published")
+                        else:
+                            logger.info("ℹ️ No next season file to cleanup")
+                    
+                    return True
                 else:
                     logger.error(f"API {resp.status}")
     except Exception as e:
@@ -110,10 +133,11 @@ async def update_calendar_secret() -> bool:
     
     return False
 
-def parse_gpro_events(events: list) -> Dict[int, Dict]:
+def parse_gpro_events(events: list, is_next_season: bool = False) -> dict:
     """Parse GPRO events - SEQUENTIAL RACE NUMBERS 1,2,3...!"""
     calendar = {}
     valid_races = []
+    season_type = "🌟 NEXT" if is_next_season else "✅ CURRENT"
     
     # **1. COLLECT ALL valid races first**
     for event in events:
@@ -157,9 +181,9 @@ def parse_gpro_events(events: list) -> Dict[int, Dict]:
             'date': race_data['date'],
             'group': race_data['group']
         }
-        logger.info(f"✅ Race {seq_num}: {race_data['track']} → {race_data['date'].strftime('%d.%m %Y 19:00 UTC')}")
+        logger.info(f"{season_type} Race {seq_num}: {race_data['track']} → {race_data['date'].strftime('%d.%m %Y 19:00 UTC')}")
     
-    logger.info(f"Parsed {len(calendar)} sequential race events at 19:00 UTC")
+    logger.info(f"{season_type} Parsed {len(calendar)} sequential race events at 19:00 UTC")
     return calendar
 
 def parse_gpro_date_fixed(date_str: str) -> datetime:
@@ -214,7 +238,7 @@ def parse_gpro_date_fixed(date_str: str) -> datetime:
     logger.warning(f"Cannot parse date: '{date_str}'")
     return None
 
-def save_calendar(calendar: Dict):
+def save_calendar(calendar: dict):
     """Save calendar"""
     serializable = {}
     for k, v in calendar.items():
@@ -226,10 +250,24 @@ def save_calendar(calendar: Dict):
         }
     with open(CALENDAR_FILE, 'w') as f:
         json.dump(serializable, f)
+    logger.info(f"💾 Saved current season to {CALENDAR_FILE}")
 
-def get_races_closing_soon(hours_before: float = 720) -> Dict[int, Dict]:
+def save_next_season_calendar(calendar: dict):
+    """Save NEXT season calendar"""
+    serializable = {}
+    for k, v in calendar.items():
+        serializable[str(k)] = {
+            'quali_close': v['quali_close'].isoformat(),
+            'track': v['track'],
+            'date': v['date'].isoformat(),
+            'group': v['group']
+        }
+    with open(NEXT_SEASON_FILE, 'w') as f:
+        json.dump(serializable, f)
+    logger.info(f"💾 Saved next season to {NEXT_SEASON_FILE}")
+
+def get_races_closing_soon(hours_before: float = 720) -> dict:
     """Get races closing within 30 days - SORTED by time!"""
-    from datetime import datetime
     now = datetime.utcnow()
     upcoming = {}
     
