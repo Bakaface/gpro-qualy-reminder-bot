@@ -1,7 +1,5 @@
-import asyncio
 import logging
 import math
-import os  # ← ADDED for next season file checks
 from aiogram import Router, F
 from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.filters import Command
@@ -242,7 +240,7 @@ async def cmd_calendar(message: Message):
 
 @router.message(Command("next"))
 async def cmd_next(message: Message):
-    from gpro_calendar import next_season_calendar, load_next_season_silent
+    from gpro_calendar import load_next_season_silent
     
     await load_next_season_silent()
     
@@ -262,7 +260,6 @@ async def cmd_schedule(message: Message):
 async def cmd_update(message: Message):
     from config import ADMIN_USER_ID
     from notifications import users_data, reset_user_status
-    from gpro_calendar import next_season_calendar
 
     if message.from_user.id != ADMIN_USER_ID:
         await message.answer("❌ Admin only")

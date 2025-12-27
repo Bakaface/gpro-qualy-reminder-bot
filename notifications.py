@@ -6,7 +6,7 @@ from typing import Dict
 from aiogram import Bot
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from gpro_calendar import get_races_closing_soon, race_calendar
-from datetime import datetime, timedelta
+from datetime import datetime
 
 logger = logging.getLogger(__name__)
 

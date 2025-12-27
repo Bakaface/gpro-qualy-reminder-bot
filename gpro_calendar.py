@@ -3,7 +3,6 @@ import logging
 import re
 import os
 from datetime import datetime, timedelta
-from typing import Dict
 import aiohttp
 from config import GPRO_API_TOKEN, CALENDAR_FILE, GPRO_LANG, NEXT_SEASON_FILE
 
