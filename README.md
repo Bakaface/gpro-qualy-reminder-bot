@@ -134,8 +134,7 @@ Uses GPRO public calendar API:
 GET https://gpro.net/gb/backend/api/v2/Calendar
 ```
 
-Caches results in `gpro_calendar.json`. No authentication required (only API key).
-
+🗄️ Caches results in `gpro_calendar.json`. Requires GPRO API token (.env → GPRO_API_TOKEN) 
 
 ## License
 **Unlicense** - Free software, public domain. Use freely! ✨
