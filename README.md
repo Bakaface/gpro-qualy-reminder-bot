@@ -138,7 +138,7 @@ Caches results in `gpro_calendar.json`. No authentication required (only API key
 
 
 ## License
-***Unlicense** - Free software, public domain. Use freely! ✨
+**Unlicense** - Free software, public domain. Use freely! ✨
 This is free and unencumbered software released into the public domain.
 
 Anyone is free to copy, modify, publish, use, compile, sell, or distribute this
