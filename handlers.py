@@ -41,51 +41,55 @@ def format_time_until_quali(quali_close):
         return ""
 
 def format_full_calendar():
-    """Fire next race + quali time remaining"""
+    """Races #1-#17 sequential order with 🔥 on next future race"""
     if not race_calendar:
         return "No races scheduled"
     
     now = datetime.now()
     race_list = []
     
-    # Handle dict or list
+    # Collect races 1-17 in sequential order (regardless of dict keys)
     if isinstance(race_calendar, dict):
-        race_list = list(race_calendar.values())
+        for race_id in range(1, 18):  # Force 1-17 order
+            if race_id in race_calendar and isinstance(race_calendar[race_id], dict):
+                race_data = race_calendar[race_id].copy()
+                race_data['race_id'] = race_id
+                race_list.append(race_data)
     else:
-        race_list = race_calendar
+        # List format - take first 17
+        for i in range(min(17, len(race_calendar))):
+            race_data = race_calendar[i]
+            if isinstance(race_data, dict):
+                race_data = race_data.copy()
+                race_data['race_id'] = i + 1
+                race_list.append(race_data)
     
     # Find next race (first with future quali)
-    next_race_index = -1
-    for i, race in enumerate(race_list):
-        if isinstance(race, dict):
-            quali_close = race.get('quali_close', now)
-            if quali_close > now:
-                next_race_index = i
-                break
+    next_race_id = None
+    for race in race_list:
+        if race.get('quali_close', now) > now:
+            next_race_id = race['race_id']
+            break
     
     text = ""
-    for i, race in enumerate(race_list[:17], 1):
-        if isinstance(race, dict):
-            track = race.get('track', f'Race {i}')
-            race_date = race.get('date', now)
-            quali_close = race.get('quali_close', now)
-            race_id = race.get('race_id', i)
-            
-            date_str = race_date.strftime("%a %d.%m")
-            time_text = format_time_until_quali(quali_close)
-            
-            time_info = date_str
-            if time_text:
-                time_info += f" • {time_text}"
-            
-            # FIRE NEXT RACE
-            if i - 1 == next_race_index:
-                text += f"🔥 **#{race_id} {track}** - {time_info}\n"
-            else:
-                text += f"**#{race_id} {track}** - {time_info}\n"
+    for race in race_list:
+        track = race.get('track', f'Race {race["race_id"]}')
+        race_date = race.get('date', now)
+        quali_close = race.get('quali_close', now)
+        race_id = race['race_id']
+        
+        date_str = race_date.strftime("%a %d.%m")
+        time_text = format_time_until_quali(quali_close)
+        
+        time_info = date_str
+        if time_text:
+            time_info += f" • {time_text}"
+        
+        # 🔥 NEXT RACE
+        if race_id == next_race_id:
+            text += f"🔥 **#{race_id} {track}** - {time_info}\n"
         else:
-            track = str(race)
-            text += f"**{track}** - Date TBD\n"
+            text += f"**#{race_id} {track}** - {time_info}\n"
     
     return text.rstrip()
 
@@ -138,14 +142,36 @@ async def cmd_status(message: Message):
 @router.message(Command("notify"))
 async def cmd_notify(message: Message, bot):
     from notifications import send_quali_notification
-    races_soon = get_races_closing_soon(48.1)
-    if not races_soon:
-        await message.answer("🔔 No upcoming races")
+    
+    if not race_calendar:
+        await message.answer("🔔 No races scheduled")
         return
     
-    first_race_id = list(races_soon.keys())[0]
-    first_race_data = races_soon[first_race_id]
-    await send_quali_notification(bot, message.from_user.id, first_race_id, first_race_data)
+    # FIXED: Sort by quali_close time to get TRUE next race
+    now = datetime.utcnow()
+    future_races = []
+    
+    # Handle dict or list
+    if isinstance(race_calendar, dict):
+        for race_id, race_data in race_calendar.items():
+            if isinstance(race_data, dict) and race_data.get('quali_close', now) > now:
+                future_races.append((race_id, race_data))
+    else:
+        # List format fallback
+        for i, race_data in enumerate(race_calendar):
+            if isinstance(race_data, dict) and race_data.get('quali_close', now) > now:
+                race_id = race_data.get('race_id', i+1)
+                future_races.append((race_id, race_data))
+    
+    # Sort by quali_close (earliest first)
+    future_races.sort(key=lambda x: x[1].get('quali_close', now))
+    
+    if future_races:
+        next_race_id, next_race_data = future_races[0]  # First = soonest
+        await send_quali_notification(bot, message.from_user.id, next_race_id, next_race_data)
+        logger.info(f"🔔 /notify sent for race {next_race_id} ({next_race_data.get('track', 'Unknown')}) to {message.from_user.id}")
+    else:
+        await message.answer("🔔 No upcoming qualifications")
 
 @router.message(Command("calendar"))
 async def cmd_calendar(message: Message):
