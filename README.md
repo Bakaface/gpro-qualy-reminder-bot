@@ -31,8 +31,8 @@ Telegram bot for Grand Prix Racing Online (GPRO) that sends qualification deadli
 ## Quick Start
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/gpro-bot.git
-cd gpro-bot
+git clone https://github.com/nyakze/gpro-qualy-reminder-bot.git
+cd gpro-qualy-reminder-bot
 python -m venv venv
 source venv/bin/activate  # Linux/Mac
 pip install -r requirements.txt
@@ -95,8 +95,8 @@ After=network.target
 
 [Service]
 User=ubuntu
-WorkingDirectory=/home/ubuntu/gpro
-Environment=PATH=/home/ubuntu/gpro/venv/bin
+WorkingDirectory=/home/ubuntu/gpro-qualy-reminder-bot
+Environment=PATH=/home/ubuntu/gpro-qualy-reminder-bot/venv/bin
 ExecStart=/home/ubuntu/gpro/venv/bin/python bot.py
 Restart=always
 
