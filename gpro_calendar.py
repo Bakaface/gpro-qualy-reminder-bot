@@ -13,23 +13,6 @@ race_calendar = {}
 next_season_calendar = {}
 
 
-def get_true_next_race_id():
-    """Find TRUE next race ID across both seasons"""
-    from handlers import race_calendar, next_season_calendar
-    now = datetime.now()
-    
-    # 1. Current season first
-    for race_id in range(1, 18):
-        if race_id in race_calendar and race_calendar[race_id].get('quali_close', now) > now:
-            return race_id
-    
-    # 2. Next season if current finished
-    for race_id in range(1, 18):
-        if race_id in next_season_calendar and next_season_calendar[race_id].get('quali_close', now) > now:
-            return race_id
-    
-    return None
-
 async def load_calendar_silent() -> bool:
     """Load from cache ONLY - no API calls"""
     try:
