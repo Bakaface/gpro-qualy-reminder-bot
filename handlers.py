@@ -184,7 +184,7 @@ async def cmd_notify(message: Message, bot):
     
     if future_races:
         next_race_id, next_race_data = future_races[0]  # First = soonest
-        await send_quali_notification(bot, message.from_user.id, next_race_id, next_race_data)
+        await send_quali_notification(bot, message.from_user.id, next_race_id, next_race_data, "manual")
         logger.info(f"🔔 /notify sent for race {next_race_id} ({next_race_data.get('track', 'Unknown')}) to {message.from_user.id}")
     else:
         await message.answer("🔔 No upcoming qualifications")
