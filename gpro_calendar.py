@@ -250,7 +250,7 @@ def save_calendar(calendar: dict):
             'group': v['group']
         }
     with open(CALENDAR_FILE, 'w') as f:
-        json.dump(serializable, f)
+        json.dump(serializable, f, indent=2)
     logger.info(f"💾 Saved current season to {CALENDAR_FILE}")
 
 def save_next_season_calendar(calendar: dict):
@@ -264,7 +264,7 @@ def save_next_season_calendar(calendar: dict):
             'group': v['group']
         }
     with open(NEXT_SEASON_FILE, 'w') as f:
-        json.dump(serializable, f)
+        json.dump(serializable, f, indent=2)
     logger.info(f"💾 Saved next season to {NEXT_SEASON_FILE}")
 
 def get_races_closing_soon(hours_before: float = 720) -> dict:
