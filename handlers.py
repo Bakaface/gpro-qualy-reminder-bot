@@ -215,10 +215,10 @@ async def cmd_schedule(message: Message):
 
 @router.message(Command("update"))
 async def cmd_update(message: Message):
-    from config import ADMIN_USER_ID
+    from config import ADMIN_USER_IDS
     from notifications import users_data, reset_user_status
 
-    if message.from_user.id != ADMIN_USER_ID:
+    if message.from_user.id not in ADMIN_USER_IDS:
         await message.answer("❌ Admin only")
         return
 
@@ -250,10 +250,10 @@ async def cmd_update(message: Message):
 
 @router.message(Command("users"))
 async def cmd_users(message: Message):
-    from config import ADMIN_USER_ID
-    logger.debug(f"USERS - User: {message.from_user.id} ({type(message.from_user.id)}), Admin: {ADMIN_USER_ID} ({type(ADMIN_USER_ID)})")
+    from config import ADMIN_USER_IDS
+    logger.debug(f"USERS - User: {message.from_user.id} ({type(message.from_user.id)}), Admins: {ADMIN_USER_IDS}")
 
-    if message.from_user.id != ADMIN_USER_ID:
+    if message.from_user.id not in ADMIN_USER_IDS:
         logger.warning(f"USERS: Access denied for user {message.from_user.id}")
         await message.answer("❌ Admin only")
         return
