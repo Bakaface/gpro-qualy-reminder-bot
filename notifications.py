@@ -133,6 +133,7 @@ notify_history = {}  # {(race_id, window): sent_timestamp}
 
 async def check_notifications(bot: Bot):
     """Continuous notification loop - checks every 5 minutes"""
+    global notify_history
     logger.info("🔔 Starting notification checker (5min interval)")
     load_users_data()
 
