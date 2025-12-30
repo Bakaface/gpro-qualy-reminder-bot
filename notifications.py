@@ -6,13 +6,12 @@ from typing import Dict
 from aiogram import Bot
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from gpro_calendar import get_races_closing_soon, race_calendar
-from datetime import datetime
+from datetime import datetime, timedelta
 
 logger = logging.getLogger(__name__)
 
 users_data: Dict[int, Dict] = {}
 USERS_FILE = 'users_data.json'
-notification_lock = asyncio.Lock()  # CRITICAL: Prevents concurrent sends
 
 def load_users_data():
     global users_data
@@ -58,6 +57,28 @@ def get_user_status(user_id: int) -> Dict:
 async def send_quali_notification(bot: Bot, user_id: int, race_id: int, race_data: Dict, notification_type: str = "deadline"):
     user_status = get_user_status(user_id)
     if user_status.get('completed_quali') == race_id:
+        # SHOW STATUS for manual /notify, but skip automatic notifications
+        if notification_type != "manual":
+            return  # Skip automatic notifications
+        
+        # SPECIAL "DONE" message for manual /notify
+        track = race_data['track']
+        message = (
+            f"✅ **Race {race_id} - QUALI DONE**\n\n"
+            f"📍 **{track}**\n"
+            f"⏰ Notifications **disabled** for this race\n\n"
+            f"Use /reset to re-enable"
+        )
+        
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🔄 Reset Status", callback_data=f"reset_{race_id}")]
+        ])
+        
+        try:
+            await bot.send_message(user_id, message, reply_markup=keyboard, parse_mode='Markdown')
+            logger.info(f"ℹ️ Sent DONE status to {user_id} for race {race_id}")
+        except Exception as e:
+            logger.error(f"Status notify failed: {e}")
         return
 
     track = race_data['track']
@@ -70,7 +91,6 @@ async def send_quali_notification(bot: Bot, user_id: int, race_id: int, race_dat
         deadline = quali_close.strftime("%d.%m %H:%M UTC")
         race_time = race_date.strftime('%d.%m %H:%M UTC')
     else:
-        # FIX: Calculate hours_left if missing (for /notify from race_calendar)
         now = datetime.utcnow()
         if 'hours_left' not in race_data:
             hours_left = (quali_close - now).total_seconds() / 3600
@@ -109,87 +129,54 @@ async def send_quali_notification(bot: Bot, user_id: int, race_id: int, race_dat
         logger.error(f"Notify {user_id} failed: {e}")
 
 async def check_notifications(bot: Bot):
-    """NUCLEAR FIX: Lock + Single instance only"""
-    global notification_lock
-    logger.info("🔔 Notification checker started (SINGLE THREAD)")
-    
-    # Kill any existing loops
-    tasks = [t for t in asyncio.all_tasks() if 'check_notifications' in str(t)]
-    for task in tasks:
-        task.cancel()
-        logger.info("🛑 Killed duplicate notification task")
-    
-    notify_history: Dict[int, set] = {}
-    last_alert_time: Dict[int, float] = {}
+    logger.info("🔔 Pre-calculating notifications")
     load_users_data()
     
-    while True:
-        async with notification_lock:  # CRITICAL: Only ONE loop runs at a time
-            try:
-                logger.debug(f"Checking... ({len(users_data)} users)")
-                
-                # Get races closing soon AND full calendar for race times
-                races_closing = get_races_closing_soon(48.1)
-                current_time = asyncio.get_event_loop().time()
-                now = datetime.utcnow()
-                
-                # NEW: Check QUALI OPENS notifications using full calendar
-                for race_id, race_data in race_calendar.items():
-                    if race_id in notify_history and "opens_soon" in notify_history[race_id]:
-                        continue
-                    
-                    race_time = race_data['date']
-                    time_since_race = (now - race_time).total_seconds() / 3600
-                    
-                    # Within 20min window of 2.5h after race
-                    if 2.4 <= time_since_race <= 2.6:
-                        if race_id not in notify_history:
-                            notify_history[race_id] = set()
-                        
-                        if "opens_soon" not in notify_history[race_id]:
-                            # SINGLE SEND ONLY
-                            for user_id in list(users_data.keys()):
-                                await send_quali_notification(bot, user_id, race_id, race_data, "opens_soon")
-                            
-                            notify_history[race_id].add("opens_soon")
-                            last_alert_time[race_id] = current_time
-                            logger.info(f"🆕 Sent 'quali is open' for race {race_id} ({time_since_race:.1f}h after race)")
-                            break  # Only one opens notification per check
-                
-                # Existing CLOSING SOON notifications (unchanged)
-                for race_id, race_data in races_closing.items():
-                    hours_left = race_data['hours_left']
-                    
-                    # 30min cooldown
-                    if race_id in last_alert_time and (current_time - last_alert_time[race_id]) < 1800:
-                        continue
-                    
-                    notify_windows = [
-                        (48, 0.1, "48h"), (24, 0.1, "24h"), 
-                        (2, 0.08, "2h"), (0.1667, 0.03, "10min")
-                    ]
-                    
-                    for target_h, window, label in notify_windows:
-                        if abs(hours_left - target_h) <= window:
-                            if race_id not in notify_history or label not in notify_history[race_id]:
-                                # SINGLE SEND ONLY
-                                for user_id in list(users_data.keys()):
-                                    await send_quali_notification(bot, user_id, race_id, race_data)
-                                
-                                notify_history.setdefault(race_id, set()).add(label)
-                                last_alert_time[race_id] = current_time
-                                logger.info(f"🎯 EXACT: Sent {label} for race {race_id} ({hours_left:.2f}h)")
-                                break
-                
-                # Cleanup old history
-                active_race_ids = set(races_closing.keys()) | set(race_calendar.keys())
-                notify_history = {k: v for k, v in notify_history.items() if k in active_race_ids}
-                last_alert_time = {k: v for k, v in last_alert_time.items() if k in active_race_ids}
-                
-            except Exception as e:
-                logger.error(f"Loop error: {e}")
+    now = datetime.utcnow()
+    scheduled_sends = []
+    
+    # 1. CLOSING SOON notifications (before quali_close)
+    races_closing = get_races_closing_soon(72)
+    for race_id, race_data in races_closing.items():
+        quali_close = race_data['quali_close']
         
-        await asyncio.sleep(300)
+        send_times = [
+            (quali_close - timedelta(hours=48), "48h"),
+            (quali_close - timedelta(hours=24), "24h"), 
+            (quali_close - timedelta(hours=2), "2h"),
+            (quali_close - timedelta(minutes=10), "10min")
+        ]
+        
+        for send_time, label in send_times:
+            if send_time > now:
+                delay = (send_time - now).total_seconds()
+                scheduled_sends.append((delay, race_id, race_data, label))
+    
+    # 2. NEXT RACE quali opens 2.5h after CURRENT race finishes
+    if races_closing:
+        current_race_id = min(races_closing.keys())
+        if current_race_id + 1 in race_calendar:
+            next_race_data = race_calendar[current_race_id + 1]
+            current_race_finish = races_closing[current_race_id]['date']
+            opens_time = current_race_finish + timedelta(hours=2.5)
+            
+            if opens_time > now:
+                delay = (opens_time - now).total_seconds()
+                scheduled_sends.append((delay, current_race_id + 1, next_race_data, "opens_soon"))
+    
+    # Sort by soonest first
+    scheduled_sends.sort(key=lambda x: x[0])
+    
+    logger.info(f"📅 Scheduled {len(scheduled_sends)} notifications")
+    for delay, race_id, _, label in scheduled_sends[:5]:
+        logger.info(f"  → Race {race_id} {label} in {delay/3600:.1f}h")
+    
+    # Execute in sequence
+    for delay, race_id, race_data, label in scheduled_sends:
+        await asyncio.sleep(delay)
+        for user_id in list(users_data.keys()):
+            await send_quali_notification(bot, user_id, race_id, race_data, label)
+        logger.info(f"🎯 Sent {label} for race {race_id}")
 
 def mark_quali_done(user_id: int, race_id: int):
     get_user_status(user_id)
