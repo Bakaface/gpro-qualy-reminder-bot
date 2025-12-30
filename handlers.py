@@ -286,10 +286,17 @@ async def handle_quali_done(callback: CallbackQuery):
     await callback.message.edit_text(callback.message.text + "\n\n✅ *Race marked done!*")
     await callback.answer("✅ Done!")
 
-@router.callback_query(F.data == "reset_all")
-async def reset_all(callback: CallbackQuery):
-    reset_user_status(callback.from_user.id)
-    await callback.message.edit_text(callback.message.text + "\n\n🔄 *Notifications reset!*")
-    await callback.answer("🔄 Reset!")
+@router.callback_query(F.data.startswith("reset_"))
+async def handle_reset(callback: CallbackQuery):
+    if callback.data == "reset_all":
+        reset_user_status(callback.from_user.id)
+        await callback.message.edit_text(callback.message.text + "\n\n🔄 *Notifications reset!*")
+        await callback.answer("🔄 Reset!")
+    else:
+        # reset_{race_id} format
+        race_id = int(callback.data.split("_")[1])
+        reset_user_status(callback.from_user.id)
+        await callback.message.edit_text(callback.message.text + "\n\n🔄 *Notifications re-enabled!*")
+        await callback.answer("🔄 Re-enabled!")
 
 logger.info("✅ handlers.py loaded - Aiogram 3.x Router ready (/next added)")

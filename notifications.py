@@ -56,29 +56,9 @@ def get_user_status(user_id: int) -> Dict:
 
 async def send_quali_notification(bot: Bot, user_id: int, race_id: int, race_data: Dict, notification_type: str = "deadline"):
     user_status = get_user_status(user_id)
-    if user_status.get('completed_quali') == race_id:
-        # SHOW STATUS for manual /notify, but skip automatic notifications
-        if notification_type != "manual":
-            return  # Skip automatic notifications
-        
-        # SPECIAL "DONE" message for manual /notify
-        track = race_data['track']
-        message = (
-            f"✅ **Race {race_id} - QUALI DONE**\n\n"
-            f"📍 **{track}**\n"
-            f"⏰ Notifications **disabled** for this race\n\n"
-            f"Use /reset to re-enable"
-        )
-        
-        keyboard = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="🔄 Reset Status", callback_data=f"reset_{race_id}")]
-        ])
-        
-        try:
-            await bot.send_message(user_id, message, reply_markup=keyboard, parse_mode='Markdown')
-            logger.info(f"ℹ️ Sent DONE status to {user_id} for race {race_id}")
-        except Exception as e:
-            logger.error(f"Status notify failed: {e}")
+
+    # Skip automatic notifications if user marked quali done
+    if user_status.get('completed_quali') == race_id and notification_type != "manual":
         return
 
     track = race_data['track']
@@ -110,17 +90,32 @@ async def send_quali_notification(bot: Bot, user_id: int, race_id: int, race_dat
         race_time = race_date.strftime('%d.%m %H:%M UTC')
         title = f"**Quali closes in {time_text}!**"
 
-    keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="✅ Quali Done", callback_data=f"done_{race_id}")]
-    ])
+    # Check if user already marked this race done
+    is_marked_done = user_status.get('completed_quali') == race_id
 
-    message = (
-        f"{emoji} {title}\n\n"
-        f"🏁 **Race #{race_id}**\n"
-        f"📍 **{track}**\n"
-        f"📅 **Quali: {deadline} | Race: {race_time}**\n\n"
-        f"Click button to disable notifications for this race"
-    )
+    if is_marked_done:
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🔄 Reset Status", callback_data=f"reset_{race_id}")]
+        ])
+        message = (
+            f"{emoji} {title}\n\n"
+            f"🏁 **Race #{race_id}**\n"
+            f"📍 **{track}**\n"
+            f"📅 **Quali: {deadline} | Race: {race_time}**\n\n"
+            f"ℹ️ **Automatic notifications disabled** for this race\n"
+            f"Click button to re-enable notifications"
+        )
+    else:
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="✅ Quali Done", callback_data=f"done_{race_id}")]
+        ])
+        message = (
+            f"{emoji} {title}\n\n"
+            f"🏁 **Race #{race_id}**\n"
+            f"📍 **{track}**\n"
+            f"📅 **Quali: {deadline} | Race: {race_time}**\n\n"
+            f"Click button to disable notifications for this race"
+        )
 
     try:
         await bot.send_message(user_id, message, reply_markup=keyboard, parse_mode='Markdown')
