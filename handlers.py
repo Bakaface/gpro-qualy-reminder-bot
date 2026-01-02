@@ -8,7 +8,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from datetime import datetime
 from gpro_calendar import race_calendar, next_season_calendar, get_races_closing_soon, update_calendar, load_next_season_silent
-from notifications import get_user_status, mark_quali_done, reset_user_status, set_user_group, toggle_notification, is_notification_enabled, users_data, save_users_data, send_quali_notification, LANGUAGE_OPTIONS, set_user_language, get_user_language
+from notifications import get_user_status, mark_quali_done, reset_user_status, set_user_group, toggle_notification, is_notification_enabled, users_data, save_users_data, send_quali_notification, LANGUAGE_OPTIONS, set_user_language, get_user_language, get_custom_notifications, set_custom_notification, parse_time_input, format_custom_notification_time, CUSTOM_NOTIF_MIN_HOURS, CUSTOM_NOTIF_MAX_HOURS
 from config import ADMIN_USER_IDS
 
 logger = logging.getLogger(__name__)
@@ -27,6 +27,10 @@ NOTIFICATION_LABELS = {
 
 class SetGroupStates(StatesGroup):
     waiting_for_group = State()
+
+class CustomNotificationStates(StatesGroup):
+    waiting_for_time = State()
+    slot_index = State()
 
 import pycountry
 
@@ -809,6 +813,12 @@ async def handle_notifications_menu(callback: CallbackQuery):
             callback_data=f"toggle_{notif_type}"
         )])
 
+    # Custom notifications button
+    keyboard_buttons.append([InlineKeyboardButton(
+        text="⏱️ Custom Notifications",
+        callback_data="custom_notif_menu"
+    )])
+
     # Enable/Disable All button
     all_enabled = all(notifications.get(t, True) for t in NOTIFICATION_LABELS.keys())
     if all_enabled:
@@ -839,6 +849,244 @@ async def handle_notifications_menu(callback: CallbackQuery):
         parse_mode='Markdown'
     )
     await callback.answer()
+
+@router.callback_query(F.data == "custom_notif_menu")
+async def handle_custom_notifications_menu(callback: CallbackQuery):
+    """Show custom notifications menu"""
+    user_id = callback.from_user.id
+    custom_notifs = get_custom_notifications(user_id)
+
+    # Build keyboard with custom notification slots
+    keyboard_buttons = []
+
+    for slot_idx, custom_notif in enumerate(custom_notifs):
+        enabled = custom_notif.get('enabled', False)
+        hours_before = custom_notif.get('hours_before')
+
+        if enabled and hours_before is not None:
+            time_str = format_custom_notification_time(hours_before)
+            button_text = f"⏱️ Custom {slot_idx+1}: {time_str}"
+        else:
+            button_text = f"➕ Set Custom Notification {slot_idx+1}"
+
+        keyboard_buttons.append([InlineKeyboardButton(
+            text=button_text,
+            callback_data=f"custom_notif_edit_{slot_idx}"
+        )])
+
+    # Back button
+    keyboard_buttons.append([InlineKeyboardButton(
+        text="◀ Back to Notifications",
+        callback_data="notif_menu"
+    )])
+
+    keyboard = InlineKeyboardMarkup(inline_keyboard=keyboard_buttons)
+
+    min_time = int(CUSTOM_NOTIF_MIN_HOURS * 60)  # Convert to minutes
+    max_time = int(CUSTOM_NOTIF_MAX_HOURS)  # Already in hours
+
+    await callback.message.edit_text(
+        "⏱️ **Custom Notifications**\n\n"
+        f"Set your own notification times ({min_time}m - {max_time}h before quali closes).\n\n"
+        f"You can have up to 2 custom notifications.\n\n"
+        "Click a slot to set or edit it.",
+        reply_markup=keyboard,
+        parse_mode='Markdown'
+    )
+    await callback.answer()
+
+@router.callback_query(F.data.startswith("custom_notif_edit_"))
+async def handle_custom_notification_edit(callback: CallbackQuery, state: FSMContext):
+    """Handle editing a custom notification slot"""
+    user_id = callback.from_user.id
+
+    try:
+        slot_idx = int(callback.data.split("_")[-1])
+    except (ValueError, IndexError):
+        await callback.answer("❌ Invalid slot", show_alert=True)
+        return
+
+    custom_notifs = get_custom_notifications(user_id)
+    custom_notif = custom_notifs[slot_idx]
+
+    # Build preset buttons
+    preset_times = [
+        ("20m", 20/60), ("30m", 30/60), ("1h", 1),
+        ("3h", 3), ("6h", 6), ("12h", 12),
+        ("24h", 24), ("48h", 48), ("70h", 70)
+    ]
+
+    keyboard_buttons = []
+
+    # Add preset buttons in rows of 3
+    for i in range(0, len(preset_times), 3):
+        row = []
+        for label, hours in preset_times[i:i+3]:
+            row.append(InlineKeyboardButton(
+                text=label,
+                callback_data=f"custom_notif_set_{slot_idx}_{hours}"
+            ))
+        keyboard_buttons.append(row)
+
+    # Add "Custom time" button
+    keyboard_buttons.append([InlineKeyboardButton(
+        text="✏️ Enter Custom Time",
+        callback_data=f"custom_notif_input_{slot_idx}"
+    )])
+
+    # Add "Disable" button if currently enabled
+    if custom_notif.get('enabled', False):
+        keyboard_buttons.append([InlineKeyboardButton(
+            text="🔕 Disable This Notification",
+            callback_data=f"custom_notif_disable_{slot_idx}"
+        )])
+
+    # Back button
+    keyboard_buttons.append([InlineKeyboardButton(
+        text="◀ Back",
+        callback_data="custom_notif_menu"
+    )])
+
+    keyboard = InlineKeyboardMarkup(inline_keyboard=keyboard_buttons)
+
+    current_status = ""
+    if custom_notif.get('enabled', False):
+        time_str = format_custom_notification_time(custom_notif.get('hours_before'))
+        current_status = f"\n\n**Current:** {time_str}"
+
+    await callback.message.edit_text(
+        f"⏱️ **Custom Notification {slot_idx+1}**{current_status}\n\n"
+        "Select a preset time or enter a custom time:",
+        reply_markup=keyboard,
+        parse_mode='Markdown'
+    )
+    await callback.answer()
+
+@router.callback_query(F.data.startswith("custom_notif_set_"))
+async def handle_custom_notification_set(callback: CallbackQuery):
+    """Handle setting a custom notification with a preset value"""
+    user_id = callback.from_user.id
+
+    try:
+        parts = callback.data.split("_")
+        slot_idx = int(parts[3])
+        hours_before = float(parts[4])
+    except (ValueError, IndexError):
+        await callback.answer("❌ Invalid data", show_alert=True)
+        return
+
+    success, message = set_custom_notification(user_id, slot_idx, hours_before)
+
+    if success:
+        await callback.answer(f"✅ {message}")
+        # Return to custom notifications menu
+        await handle_custom_notifications_menu(callback)
+    else:
+        await callback.answer(f"❌ {message}", show_alert=True)
+
+@router.callback_query(F.data.startswith("custom_notif_disable_"))
+async def handle_custom_notification_disable(callback: CallbackQuery):
+    """Handle disabling a custom notification"""
+    user_id = callback.from_user.id
+
+    try:
+        slot_idx = int(callback.data.split("_")[-1])
+    except (ValueError, IndexError):
+        await callback.answer("❌ Invalid slot", show_alert=True)
+        return
+
+    success, message = set_custom_notification(user_id, slot_idx, None)
+
+    if success:
+        await callback.answer(f"✅ Custom notification {slot_idx+1} disabled")
+        # Return to custom notifications menu
+        await handle_custom_notifications_menu(callback)
+    else:
+        await callback.answer(f"❌ {message}", show_alert=True)
+
+@router.callback_query(F.data.startswith("custom_notif_input_"))
+async def handle_custom_notification_input_prompt(callback: CallbackQuery, state: FSMContext):
+    """Prompt user to enter custom time"""
+    try:
+        slot_idx = int(callback.data.split("_")[-1])
+    except (ValueError, IndexError):
+        await callback.answer("❌ Invalid slot", show_alert=True)
+        return
+
+    # Store slot index in state
+    await state.update_data(slot_index=slot_idx)
+    await state.set_state(CustomNotificationStates.waiting_for_time)
+
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="❌ Cancel", callback_data="custom_notif_menu")]
+    ])
+
+    await callback.message.edit_text(
+        f"⏱️ **Custom Notification {slot_idx+1}**\n\n"
+        "Enter your custom notification time.\n\n"
+        "**Accepted formats:**\n"
+        "• `20m` or `45 minutes` (20m-70h)\n"
+        "• `2h` or `12 hours`\n"
+        "• `1h 30m` or `2h30m`\n\n"
+        "**Examples:**\n"
+        "• `20m` - 20 minutes before\n"
+        "• `6h` - 6 hours before\n"
+        "• `1h 30m` - 1 hour 30 minutes before",
+        reply_markup=keyboard,
+        parse_mode='Markdown'
+    )
+    await callback.answer()
+
+@router.message(CustomNotificationStates.waiting_for_time)
+async def process_custom_notification_time_input(message: Message, state: FSMContext):
+    """Process user's custom time input"""
+    user_id = message.from_user.id
+    time_input = message.text.strip()
+
+    # Get slot index from state
+    state_data = await state.get_data()
+    slot_idx = state_data.get('slot_index', 0)
+
+    # Parse time input
+    hours, error_msg = parse_time_input(time_input)
+
+    if error_msg:
+        await message.answer(
+            f"❌ **Error:** {error_msg}\n\n"
+            "Please try again with a valid format like: `2h`, `30m`, or `1h 30m`",
+            parse_mode='Markdown'
+        )
+        return
+
+    # Set custom notification
+    success, result_msg = set_custom_notification(user_id, slot_idx, hours)
+
+    # Clear state
+    await state.clear()
+
+    if success:
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="◀ Back to Custom Notifications", callback_data="custom_notif_menu")]
+        ])
+
+        await message.answer(
+            f"✅ **{result_msg}**\n\n"
+            "Your custom notification has been set!",
+            reply_markup=keyboard,
+            parse_mode='Markdown'
+        )
+    else:
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🔄 Try Again", callback_data=f"custom_notif_input_{slot_idx}")],
+            [InlineKeyboardButton(text="◀ Back", callback_data="custom_notif_menu")]
+        ])
+
+        await message.answer(
+            f"❌ **Error:** {result_msg}\n\n"
+            "Please try again.",
+            reply_markup=keyboard,
+            parse_mode='Markdown'
+        )
 
 @router.callback_query(F.data == "group_menu")
 async def handle_group_menu(callback: CallbackQuery, state: FSMContext):

@@ -52,6 +52,12 @@ API_CHECK_END_HOURS = 3.5  # Stop checking and send fallback at 3.5 hours
 API_CHECK_INTERVAL_MINUTES = 10  # Check API every 10 minutes
 FALLBACK_TOLERANCE_MINUTES = 15  # Send fallback within 15min of reaching 3.5h
 
+# Custom notification constraints
+CUSTOM_NOTIF_MIN_HOURS = 20 / 60  # 20 minutes minimum
+CUSTOM_NOTIF_MAX_HOURS = 70  # 70 hours maximum
+CUSTOM_NOTIF_MAX_SLOTS = 2  # Maximum 2 custom notifications per user
+CUSTOM_NOTIF_TOLERANCE_MIN = 5  # ±5 minutes tolerance for custom notifications
+
 # Use absolute path based on script location for robustness
 _SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 USERS_FILE = os.path.join(_SCRIPT_DIR, 'users_data.json')
@@ -153,6 +159,13 @@ def get_default_notification_preferences():
         'race_live': True
     }
 
+def get_default_custom_notifications():
+    """Default custom notification settings - empty slots"""
+    return [
+        {'enabled': False, 'hours_before': None},
+        {'enabled': False, 'hours_before': None}
+    ]
+
 def get_user_status(user_id: int) -> Dict:
     global users_data
     logger.debug(f"get_user_status({user_id}): {len(users_data)} users in cache")
@@ -167,6 +180,7 @@ def get_user_status(user_id: int) -> Dict:
             'completed_quali': None,
             'group': None,
             'notifications': get_default_notification_preferences(),
+            'custom_notifications': get_default_custom_notifications(),
             'gpro_lang': DEFAULT_USER_LANG
         }
         save_users_data()
@@ -181,6 +195,10 @@ def get_user_status(user_id: int) -> Dict:
         if 'notifications' not in users_data[user_id]:
             users_data[user_id]['notifications'] = get_default_notification_preferences()
             logger.debug(f"Added 'notifications' field to user {user_id}")
+            needs_save = True
+        if 'custom_notifications' not in users_data[user_id]:
+            users_data[user_id]['custom_notifications'] = get_default_custom_notifications()
+            logger.debug(f"Added 'custom_notifications' field to user {user_id}")
             needs_save = True
         if 'gpro_lang' not in users_data[user_id]:
             users_data[user_id]['gpro_lang'] = DEFAULT_USER_LANG
@@ -214,6 +232,135 @@ def is_notification_enabled(user_id: int, notification_type: str) -> bool:
     """Check if a notification type is enabled for a user"""
     user_status = get_user_status(user_id)
     return user_status['notifications'].get(notification_type, True)
+
+def validate_custom_notification_hours(hours: float) -> tuple[bool, str]:
+    """Validate custom notification time
+
+    Args:
+        hours: Hours before quali closes
+
+    Returns:
+        (is_valid, error_message)
+    """
+    if hours is None:
+        return False, "Time cannot be empty"
+
+    if hours < CUSTOM_NOTIF_MIN_HOURS:
+        return False, f"Minimum time is 20 minutes"
+
+    if hours > CUSTOM_NOTIF_MAX_HOURS:
+        return False, f"Maximum time is 70 hours"
+
+    return True, ""
+
+def parse_time_input(time_str: str) -> tuple[float, str]:
+    """Parse user time input into hours
+
+    Supported formats:
+    - "20m", "30min", "45 minutes" -> minutes
+    - "2h", "12 hours" -> hours
+    - "1h 30m", "2h30m" -> hours + minutes
+
+    Returns:
+        (hours_float, error_message)
+    """
+    if not time_str:
+        return None, "Please enter a time"
+
+    time_str = time_str.strip().lower()
+
+    # Try to match "Xh Ym" or "XhYm" format
+    match = re.match(r'^(\d+)\s*h(?:ours?)?\s*(\d+)\s*m(?:in(?:utes?)?)?$', time_str)
+    if match:
+        hours = int(match.group(1))
+        minutes = int(match.group(2))
+        total_hours = hours + minutes / 60
+        return total_hours, ""
+
+    # Try to match hours only: "Xh" or "X hours"
+    match = re.match(r'^(\d+)\s*h(?:ours?)?$', time_str)
+    if match:
+        hours = int(match.group(1))
+        return float(hours), ""
+
+    # Try to match minutes only: "Xm" or "X minutes"
+    match = re.match(r'^(\d+)\s*m(?:in(?:utes?)?)?$', time_str)
+    if match:
+        minutes = int(match.group(1))
+        return minutes / 60, ""
+
+    return None, "Invalid format. Use: 2h, 30m, or 1h 30m"
+
+def format_custom_notification_time(hours: float) -> str:
+    """Format hours into human-readable string
+
+    Examples:
+        0.333 -> "20m"
+        1.5 -> "1h 30m"
+        12 -> "12h"
+    """
+    if hours is None:
+        return "Not set"
+
+    total_minutes = hours * 60
+    h = int(hours)
+    m = int(total_minutes % 60)
+
+    if h > 0 and m > 0:
+        return f"{h}h {m}m"
+    elif h > 0:
+        return f"{h}h"
+    else:
+        return f"{m}m"
+
+def set_custom_notification(user_id: int, slot: int, hours_before: float) -> tuple[bool, str]:
+    """Set or update a custom notification slot
+
+    Args:
+        user_id: User ID
+        slot: Slot index (0 or 1)
+        hours_before: Hours before quali closes (None to disable)
+
+    Returns:
+        (success, message)
+    """
+    if slot < 0 or slot >= CUSTOM_NOTIF_MAX_SLOTS:
+        return False, f"Invalid slot (must be 0-{CUSTOM_NOTIF_MAX_SLOTS-1})"
+
+    # Validate hours if provided
+    if hours_before is not None:
+        is_valid, error_msg = validate_custom_notification_hours(hours_before)
+        if not is_valid:
+            return False, error_msg
+
+    user_status = get_user_status(user_id)
+    custom_notifs = user_status.get('custom_notifications', get_default_custom_notifications())
+
+    # Ensure list has correct size
+    while len(custom_notifs) < CUSTOM_NOTIF_MAX_SLOTS:
+        custom_notifs.append({'enabled': False, 'hours_before': None})
+
+    # Update slot
+    if hours_before is None:
+        custom_notifs[slot] = {'enabled': False, 'hours_before': None}
+    else:
+        custom_notifs[slot] = {'enabled': True, 'hours_before': hours_before}
+
+    user_status['custom_notifications'] = custom_notifs
+    save_users_data()
+
+    time_str = format_custom_notification_time(hours_before)
+    logger.info(f"User {user_id} set custom notification {slot+1} to: {time_str}")
+    return True, f"Custom notification {slot+1} set to {time_str}"
+
+def get_custom_notifications(user_id: int) -> list:
+    """Get user's custom notifications
+
+    Returns:
+        List of custom notification dicts
+    """
+    user_status = get_user_status(user_id)
+    return user_status.get('custom_notifications', get_default_custom_notifications())
 
 def is_valid_language(lang_code: str) -> bool:
     """Validate language code against supported languages"""
@@ -465,7 +612,7 @@ def _check_quali_closing_notifications(now: datetime) -> list:
     for race_id, race_data in races_closing.items():
         quali_close = race_data['quali_close']
 
-        # Check each notification window
+        # Check each preset notification window
         for hours_before, tolerance_min, label in NOTIFICATION_WINDOWS:
             time_until = (quali_close - now).total_seconds() / 3600
             target_hours = hours_before
@@ -478,6 +625,45 @@ def _check_quali_closing_notifications(now: datetime) -> list:
                 # Only send if not sent before
                 if history_key not in notify_history:
                     notifications.append(('quali', race_id, race_data, label, history_key))
+
+    return notifications
+
+def _check_custom_notifications(now: datetime) -> list:
+    """Check for custom notification times
+
+    Returns:
+        list: Notifications to send [(type, race_id, race_data, label, history_key, user_id), ...]
+    """
+    notifications = []
+    races_closing = get_races_closing_soon(72)  # Check up to 72 hours (max custom time + buffer)
+
+    # Check each user's custom notifications
+    for user_id, user_data in users_data.items():
+        custom_notifs = user_data.get('custom_notifications', [])
+
+        for slot_idx, custom_notif in enumerate(custom_notifs):
+            if not custom_notif.get('enabled', False):
+                continue
+
+            hours_before = custom_notif.get('hours_before')
+            if hours_before is None:
+                continue
+
+            # Check each race
+            for race_id, race_data in races_closing.items():
+                quali_close = race_data['quali_close']
+                time_until = (quali_close - now).total_seconds() / 3600
+
+                # Check if we're within the custom notification window
+                tolerance_hours = CUSTOM_NOTIF_TOLERANCE_MIN / 60
+                if abs(time_until - hours_before) <= tolerance_hours:
+                    # Create unique history key for this user+race+custom slot
+                    label = f"custom_{slot_idx+1}"
+                    history_key = (user_id, race_id, label)
+
+                    # Only send if not sent before
+                    if history_key not in notify_history:
+                        notifications.append(('custom', race_id, race_data, label, history_key, user_id))
 
     return notifications
 
@@ -591,32 +777,51 @@ async def _send_notifications_to_users(bot: Bot, notifications_to_send: list):
 
     Args:
         bot: Telegram bot instance
-        notifications_to_send: List of notifications [(type, race_id, race_data, label, history_key), ...]
+        notifications_to_send: List of notifications [(type, race_id, race_data, label, history_key, [user_id]), ...]
     """
-    for notif_type, race_id, race_data, label, history_key in notifications_to_send:
+    for notification_data in notifications_to_send:
+        # Handle both formats: regular (5 items) and custom (6 items with user_id)
+        if len(notification_data) == 6:
+            notif_type, race_id, race_data, label, history_key, target_user_id = notification_data
+            is_custom = True
+        else:
+            notif_type, race_id, race_data, label, history_key = notification_data
+            target_user_id = None
+            is_custom = False
+
         logger.info(f"🔔 Sending {label} notification for race {race_id}")
         sent_count = 0
         total_users = len(users_data)
 
-        # Iterate directly over users (dict iteration is safe in Python 3.7+)
-        for user_id in users_data:
-            if is_notification_enabled(user_id, label):
-                try:
-                    if notif_type == 'quali' or notif_type == 'opens':
-                        await send_quali_notification(bot, user_id, race_id, race_data, label)
-                    elif notif_type == 'replay':
-                        await send_race_replay_notification(bot, user_id, race_id, race_data)
-                    elif notif_type == 'live':
-                        await send_race_live_notification(bot, user_id, race_id, race_data)
-                    sent_count += 1
-                except Exception as e:
-                    logger.error(f"Failed to send {label} to user {user_id}: {e}")
+        # For custom notifications, send to specific user only
+        if is_custom:
+            try:
+                # Custom notifications are always quali-type
+                await send_quali_notification(bot, target_user_id, race_id, race_data, label)
+                sent_count = 1
+                logger.info(f"✅ Sent custom notification ({label}) for race {race_id} to user {target_user_id}")
+            except Exception as e:
+                logger.error(f"Failed to send custom {label} to user {target_user_id}: {e}")
+        else:
+            # Regular notifications - send to all users with that notification enabled
+            for user_id in users_data:
+                if is_notification_enabled(user_id, label):
+                    try:
+                        if notif_type == 'quali' or notif_type == 'opens':
+                            await send_quali_notification(bot, user_id, race_id, race_data, label)
+                        elif notif_type == 'replay':
+                            await send_race_replay_notification(bot, user_id, race_id, race_data)
+                        elif notif_type == 'live':
+                            await send_race_live_notification(bot, user_id, race_id, race_data)
+                        sent_count += 1
+                    except Exception as e:
+                        logger.error(f"Failed to send {label} to user {user_id}: {e}")
+
+            logger.info(f"✅ Sent {label} for race {race_id} to {sent_count}/{total_users} users")
 
         # Update history after sending (re-acquire lock briefly)
         async with notification_lock:
             notify_history[history_key] = datetime.utcnow()
-
-        logger.info(f"✅ Sent {label} for race {race_id} to {sent_count}/{total_users} users")
 
 
 async def check_notifications(bot: Bot):
@@ -636,6 +841,7 @@ async def check_notifications(bot: Bot):
                 notifications_to_send.extend(_check_quali_closing_notifications(now))
                 notifications_to_send.extend(await _check_quali_open_notifications(now))
                 notifications_to_send.extend(_check_race_live_notifications(now))
+                notifications_to_send.extend(_check_custom_notifications(now))
 
                 # Clean old history entries
                 cutoff = now - timedelta(days=NOTIFICATION_HISTORY_RETENTION_DAYS)
