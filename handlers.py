@@ -172,14 +172,10 @@ async def process_group_input(message: Message, state: FSMContext):
     set_user_group(message.from_user.id, group_input)
     await state.clear()
 
-    # Show confirmation with example link
-    from notifications import generate_race_link
-    example_link = generate_race_link(group_input)
-
     await message.answer(
         f"✅ **Group set to: {group_input}**\n\n"
-        f"You'll receive race live notifications with your group link!\n\n"
-        f"Example: {example_link}",
+        f"Race and replay notifications will include direct links to your group!\n\n"
+        f"Manage notification preferences with /settings",
         parse_mode='Markdown'
     )
 

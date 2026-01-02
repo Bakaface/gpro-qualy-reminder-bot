@@ -312,5 +312,5 @@ def get_races_closing_soon(hours_before: float = 720) -> dict:
     
     # Sort by closest first
     sorted_upcoming = dict(sorted(upcoming.items(), key=lambda x: x[1]['hours_left']))
-    logger.info(f"Upcoming races ({len(sorted_upcoming)}): {list(sorted_upcoming.keys())}")
+    logger.debug(f"Upcoming races ({len(sorted_upcoming)}): {list(sorted_upcoming.keys())}")
     return sorted_upcoming
