@@ -42,8 +42,11 @@ LANGUAGE_OPTIONS = {
 DEFAULT_USER_LANG = 'gb'
 
 # Timing constants
-CHECK_INTERVAL_SECONDS = 300  # 5 minutes between notification checks
-RACE_LIVE_NOTIFICATION_WINDOW_MINUTES = 10  # Send "race live" notification within 10min
+CHECK_INTERVAL_NORMAL_SECONDS = 300  # 5 minutes between checks (normal)
+CHECK_INTERVAL_FAST_SECONDS = 60  # 1 minute between checks (when race approaching)
+RACE_PROXIMITY_THRESHOLD_MINUTES = 10  # Switch to fast checks when race is within 10min
+RACE_LIVE_NOTIFICATION_BEFORE_MINUTES = 1  # Send race live notification up to 1min before race
+RACE_LIVE_NOTIFICATION_AFTER_MINUTES = 5  # Allow up to 5min after race start (just in case)
 NOTIFICATION_HISTORY_RETENTION_DAYS = 30  # Keep notification history for 30 days
 
 # API polling configuration for quali opening detection
@@ -752,7 +755,7 @@ async def _check_quali_open_notifications(now: datetime) -> list:
 
 
 def _check_race_live_notifications(now: datetime) -> list:
-    """Check for races that just started
+    """Check for races that are about to start or just started
 
     Returns:
         list: Notifications to send [(type, race_id, race_data, label, history_key), ...]
@@ -763,8 +766,9 @@ def _check_race_live_notifications(now: datetime) -> list:
         race_time = race_data['date']
         time_since_race = (now - race_time).total_seconds() / 60
 
-        # Send if we're within window after race starts
-        if 0 <= time_since_race <= RACE_LIVE_NOTIFICATION_WINDOW_MINUTES:
+        # Send if we're within window: 5min before to 2min after race starts
+        # This ensures notification is sent early (at 18:55 check for 19:00 race)
+        if -RACE_LIVE_NOTIFICATION_BEFORE_MINUTES <= time_since_race <= RACE_LIVE_NOTIFICATION_AFTER_MINUTES:
             history_key = (race_id, "race_live")
             if history_key not in notify_history:
                 notifications.append(('live', race_id, race_data, "race_live", history_key))
@@ -824,10 +828,30 @@ async def _send_notifications_to_users(bot: Bot, notifications_to_send: list):
             notify_history[history_key] = datetime.utcnow()
 
 
+def _get_next_check_interval(now: datetime) -> int:
+    """Determine next check interval based on proximity to upcoming races
+
+    Returns faster checks when race is approaching for better timing precision.
+
+    Returns:
+        int: Seconds until next check
+    """
+    # Check if any race is approaching
+    for race_id, race_data in race_calendar.items():
+        race_time = race_data['date']
+        minutes_until_race = (race_time - now).total_seconds() / 60
+
+        # If race is within threshold, use fast checking
+        if -RACE_LIVE_NOTIFICATION_AFTER_MINUTES <= minutes_until_race <= RACE_PROXIMITY_THRESHOLD_MINUTES:
+            return CHECK_INTERVAL_FAST_SECONDS
+
+    # Default to normal interval
+    return CHECK_INTERVAL_NORMAL_SECONDS
+
 async def check_notifications(bot: Bot):
-    """Continuous notification loop - checks every configured interval"""
+    """Continuous notification loop - adaptive check interval based on race proximity"""
     global notify_history
-    logger.info(f"🔔 Starting notification checker ({CHECK_INTERVAL_SECONDS//60}min interval)")
+    logger.info(f"🔔 Starting notification checker (adaptive: {CHECK_INTERVAL_NORMAL_SECONDS//60}min normal, {CHECK_INTERVAL_FAST_SECONDS}s when race approaching)")
     load_users_data()
 
     while True:
@@ -847,14 +871,18 @@ async def check_notifications(bot: Bot):
                 cutoff = now - timedelta(days=NOTIFICATION_HISTORY_RETENTION_DAYS)
                 notify_history = {k: v for k, v in notify_history.items() if v > cutoff}
 
+                # Determine next check interval based on race proximity
+                next_interval = _get_next_check_interval(now)
+
             # Send notifications outside the lock (slow operation)
             await _send_notifications_to_users(bot, notifications_to_send)
 
         except Exception as e:
             logger.error(f"❌ Notification check error: {e}")
+            next_interval = CHECK_INTERVAL_NORMAL_SECONDS  # Fallback on error
 
-        # Wait before next check
-        await asyncio.sleep(CHECK_INTERVAL_SECONDS)
+        # Wait before next check (adaptive interval)
+        await asyncio.sleep(next_interval)
 
 def mark_quali_done(user_id: int, race_id: int):
     get_user_status(user_id)
