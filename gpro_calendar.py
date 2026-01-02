@@ -12,11 +12,30 @@ logger = logging.getLogger(__name__)
 race_calendar = {}
 next_season_calendar = {}
 
+# Date parsing formats (in order of priority)
+DATE_FORMATS = [
+    '%d.%m %Y',    # 05.12 2025
+    '%b %d, %Y',
+    '%b %d %Y',
+    '%d %b %Y',
+    '%Y-%m-%d',
+    '%d.%m.%Y'
+]
 
-async def load_calendar_silent() -> bool:
-    """Load from cache ONLY - no API calls"""
+# Race timing constants
+RACE_START_HOUR_UTC = 19  # Races start at 19:00 UTC
+RACE_START_MINUTE_UTC = 0
+QUALI_CLOSES_BEFORE_RACE_HOURS = 1.5  # Quali closes 1.5 hours before race
+
+
+def _load_calendar_from_file(filepath: str) -> dict:
+    """Generic calendar loader from JSON file
+
+    Returns:
+        dict: Calendar data with datetime objects, or empty dict on error
+    """
     try:
-        with open(CALENDAR_FILE, 'r') as f:
+        with open(filepath, 'r') as f:
             data = json.load(f)
             calendar = {}
             for race_id_str, race_data in data.items():
@@ -27,42 +46,77 @@ async def load_calendar_silent() -> bool:
                     'date': datetime.fromisoformat(race_data['date']),
                     'group': race_data.get('group', 'Pro')
                 }
-            global race_calendar
-            race_calendar.clear()
-            race_calendar.update(calendar)
-            logger.info(f"✅ Loaded {len(calendar)} races from cache")
-            return True
+            return calendar
     except FileNotFoundError:
-        logger.warning("No cache file - use /calendar")
-        return False
+        logger.warning(f"No cache file: {filepath}")
+        return {}
     except Exception as e:
-        logger.error(f"Cache load error: {e}")
-        return False
+        logger.error(f"Cache load error from {filepath}: {e}")
+        return {}
+
+
+def _save_calendar_to_file(calendar: dict, filepath: str):
+    """Generic calendar saver to JSON file with atomic write
+
+    Args:
+        calendar: Calendar dict with datetime objects
+        filepath: Target file path
+
+    Raises:
+        Exception: If save fails
+    """
+    serializable = {}
+    for k, v in calendar.items():
+        serializable[str(k)] = {
+            'quali_close': v['quali_close'].isoformat(),
+            'track': v['track'],
+            'date': v['date'].isoformat(),
+            'group': v['group']
+        }
+
+    temp_file = filepath + '.tmp'
+    try:
+        with open(temp_file, 'w') as f:
+            json.dump(serializable, f, indent=2)
+            f.flush()
+            os.fsync(f.fileno())
+
+        os.replace(temp_file, filepath)
+        logger.info(f"💾 Saved calendar to {filepath}")
+    except Exception as e:
+        logger.error(f"Failed to save calendar to {filepath}: {e}")
+        if os.path.exists(temp_file):
+            try:
+                os.remove(temp_file)
+            except:
+                pass
+        raise
+
+
+async def load_calendar_silent() -> bool:
+    """Load from cache ONLY - no API calls"""
+    calendar = _load_calendar_from_file(CALENDAR_FILE)
+    if calendar:
+        global race_calendar
+        race_calendar.clear()
+        race_calendar.update(calendar)
+        logger.info(f"✅ Loaded {len(calendar)} races from cache")
+        return True
+    return False
 
 async def load_next_season_silent() -> bool:
     """Load next season from cache ONLY"""
-    try:
-        if os.path.exists(NEXT_SEASON_FILE):
-            with open(NEXT_SEASON_FILE, 'r') as f:
-                data = json.load(f)
-                calendar = {}
-                for race_id_str, race_data in data.items():
-                    race_id = int(race_id_str)
-                    calendar[race_id] = {
-                        'quali_close': datetime.fromisoformat(race_data['quali_close']),
-                        'track': race_data['track'],
-                        'date': datetime.fromisoformat(race_data['date']),
-                        'group': race_data.get('group', 'Pro')
-                    }
-                global next_season_calendar
-                next_season_calendar.clear()
-                next_season_calendar.update(calendar)
-                logger.info(f"✅ Loaded {len(calendar)} next season races from cache")
-                return True
+    if not os.path.exists(NEXT_SEASON_FILE):
         return False
-    except Exception as e:
-        logger.error(f"Next season cache load error: {e}")
-        return False
+
+    calendar = _load_calendar_from_file(NEXT_SEASON_FILE)
+    if calendar:
+        global next_season_calendar
+        next_season_calendar.clear()
+        next_season_calendar.update(calendar)
+        logger.info(f"✅ Loaded {len(calendar)} next season races from cache")
+        return True
+    return False
 
 async def update_calendar() -> bool:
     """Update calendar from GPRO API - /update command"""
@@ -156,10 +210,10 @@ def parse_gpro_events(events: list, is_next_season: bool = False) -> dict:
             race_date = parse_gpro_date_fixed(date_str)
             if not race_date:
                 continue
-                
-            # ADD 19:00 UTC race time
-            race_date = race_date.replace(hour=19, minute=0, second=0)
-            quali_close = race_date - timedelta(hours=1.5)
+
+            # Set race start time
+            race_date = race_date.replace(hour=RACE_START_HOUR_UTC, minute=RACE_START_MINUTE_UTC, second=0)
+            quali_close = race_date - timedelta(hours=QUALI_CLOSES_BEFORE_RACE_HOURS)
             
             valid_races.append({
                 'orig_id': int(idx),
@@ -205,18 +259,9 @@ def parse_gpro_date_fixed(date_str: str) -> datetime:
     day_str = day_str.strip()
     
     now = datetime.utcnow()
-    
-    # **YOUR WORKING FORMATS**
-    formats = [
-        '%d.%m %Y',    # 05.12 2025
-        '%b %d, %Y', 
-        '%b %d %Y', 
-        '%d %b %Y',
-        '%Y-%m-%d', 
-        '%d.%m.%Y'
-    ]
-    
-    for fmt in formats:
+
+    # Try all standard date formats
+    for fmt in DATE_FORMATS:
         try:
             dt = datetime.strptime(day_str, fmt)
             if dt.year < 2025:
@@ -241,62 +286,12 @@ def parse_gpro_date_fixed(date_str: str) -> datetime:
     return None
 
 def save_calendar(calendar: dict):
-    """Save calendar with atomic write to prevent corruption"""
-    serializable = {}
-    for k, v in calendar.items():
-        serializable[str(k)] = {
-            'quali_close': v['quali_close'].isoformat(),
-            'track': v['track'],
-            'date': v['date'].isoformat(),
-            'group': v['group']
-        }
-
-    temp_file = CALENDAR_FILE + '.tmp'
-    try:
-        with open(temp_file, 'w') as f:
-            json.dump(serializable, f, indent=2)
-            f.flush()
-            os.fsync(f.fileno())
-
-        os.replace(temp_file, CALENDAR_FILE)
-        logger.info(f"💾 Saved current season to {CALENDAR_FILE}")
-    except Exception as e:
-        logger.error(f"Failed to save calendar: {e}")
-        if os.path.exists(temp_file):
-            try:
-                os.remove(temp_file)
-            except:
-                pass
-        raise
+    """Save current season calendar with atomic write to prevent corruption"""
+    _save_calendar_to_file(calendar, CALENDAR_FILE)
 
 def save_next_season_calendar(calendar: dict):
-    """Save NEXT season calendar with atomic write to prevent corruption"""
-    serializable = {}
-    for k, v in calendar.items():
-        serializable[str(k)] = {
-            'quali_close': v['quali_close'].isoformat(),
-            'track': v['track'],
-            'date': v['date'].isoformat(),
-            'group': v['group']
-        }
-
-    temp_file = NEXT_SEASON_FILE + '.tmp'
-    try:
-        with open(temp_file, 'w') as f:
-            json.dump(serializable, f, indent=2)
-            f.flush()
-            os.fsync(f.fileno())
-
-        os.replace(temp_file, NEXT_SEASON_FILE)
-        logger.info(f"💾 Saved next season to {NEXT_SEASON_FILE}")
-    except Exception as e:
-        logger.error(f"Failed to save next season calendar: {e}")
-        if os.path.exists(temp_file):
-            try:
-                os.remove(temp_file)
-            except:
-                pass
-        raise
+    """Save next season calendar with atomic write to prevent corruption"""
+    _save_calendar_to_file(calendar, NEXT_SEASON_FILE)
 
 def get_races_closing_soon(hours_before: float = 720) -> dict:
     """Get races closing within 30 days - SORTED by time!"""
