@@ -28,6 +28,88 @@ NOTIFICATION_LABELS = {
 class SetGroupStates(StatesGroup):
     waiting_for_group = State()
 
+import pycountry
+
+def country_code_to_flag(country_code: str) -> str:
+    """Convert ISO 2-letter country code to flag emoji
+
+    Flag emojis are composed of regional indicator symbols.
+    Each letter is converted to a regional indicator symbol.
+
+    Examples:
+        "US" -> "🇺🇸"
+        "GB" -> "🇬🇧"
+        "FR" -> "🇫🇷"
+    """
+    if not country_code or len(country_code) != 2:
+        return ""
+
+    # Regional indicator symbols start at 0x1F1E6 (for 'A')
+    REGIONAL_INDICATOR_A = 0x1F1E6
+    country_code = country_code.upper()
+
+    try:
+        flag = "".join(chr(REGIONAL_INDICATOR_A + ord(char) - ord('A')) for char in country_code)
+        return flag
+    except (ValueError, TypeError):
+        return ""
+
+def get_country_iso_code(country_name: str) -> str:
+    """Automatically get ISO code for any country name using pycountry
+
+    Handles variations and common names automatically.
+    Returns empty string if country not found.
+    """
+    if not country_name:
+        return ""
+
+    # Try exact match first
+    try:
+        country = pycountry.countries.get(name=country_name)
+        if country:
+            return country.alpha_2
+    except (KeyError, AttributeError):
+        pass
+
+    # Try fuzzy search
+    try:
+        results = pycountry.countries.search_fuzzy(country_name)
+        if results:
+            return results[0].alpha_2
+    except (KeyError, LookupError, AttributeError):
+        pass
+
+    return ""
+
+def add_flag_to_track(track: str) -> str:
+    """Replace country name in parentheses with flag emoji
+
+    Automatically detects country and converts to flag emoji.
+    Works for any country without needing manual mapping.
+
+    Examples:
+        "Yas Marina GP (United Arab Emirates)" -> "Yas Marina GP 🇦🇪"
+        "Sakhir GP (Bahrain)" -> "Sakhir GP 🇧🇭"
+        "Silverstone GP (United Kingdom)" -> "Silverstone GP 🇬🇧"
+    """
+    if not track or '(' not in track:
+        return track
+
+    try:
+        track_name = track.split('(')[0].strip()
+        country = track.split('(')[1].split(')')[0].strip()
+
+        # Get ISO code automatically
+        iso_code = get_country_iso_code(country)
+        if iso_code:
+            flag = country_code_to_flag(iso_code)
+            return f"{track_name} {flag}"
+        else:
+            # If country not found, keep original format
+            return track
+    except (IndexError, AttributeError):
+        return track
+
 def format_group_display(group: str) -> str:
     """Convert group code to human-readable format
 
@@ -88,17 +170,18 @@ def format_full_calendar(calendar_data, title="Full Season", is_current_season=T
     text = ""
     for race in race_list:
         track = race.get('track', f'Race {race["race_id"]}')
+        track = add_flag_to_track(track)  # Add flag emoji
         race_date = race.get('date', now)
         quali_close = race.get('quali_close', now)
         race_id = race['race_id']
-        
+
         date_str = race_date.strftime("%a %d.%m")
         time_text = format_time_until_quali(quali_close)
-        
+
         time_info = date_str
         if time_text:
             time_info += f" • {time_text}"
-        
+
         # 🔥 ONLY для current season next race
         if next_race_id and race_id == next_race_id:
             text += f"🔥 **#{race_id} {track}** - {time_info}\n"
@@ -111,12 +194,13 @@ def format_race_beautiful(race_data):
     if not race_data: return "None"
 
     track = race_data.get('track', 'Unknown')
+    track = add_flag_to_track(track)  # Add flag emoji
     hours_left = race_data.get('hours_left', 0)
     quali_close = race_data.get('quali_close', datetime.utcnow())
-    
+
     hours_display = math.floor(hours_left)
     deadline = quali_close.strftime("%d.%m %H:%M")
-    
+
     return f"Qualification closes in {hours_display}h\n**({deadline})** - {track}"
 
 def format_time_until_quali(quali_close):

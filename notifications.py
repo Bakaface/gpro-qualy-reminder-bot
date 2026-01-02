@@ -56,6 +56,54 @@ FALLBACK_TOLERANCE_MINUTES = 15  # Send fallback within 15min of reaching 3.5h
 _SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 USERS_FILE = os.path.join(_SCRIPT_DIR, 'users_data.json')
 
+import pycountry
+
+def country_code_to_flag(country_code: str) -> str:
+    """Convert ISO 2-letter country code to flag emoji"""
+    if not country_code or len(country_code) != 2:
+        return ""
+    REGIONAL_INDICATOR_A = 0x1F1E6
+    country_code = country_code.upper()
+    try:
+        flag = "".join(chr(REGIONAL_INDICATOR_A + ord(char) - ord('A')) for char in country_code)
+        return flag
+    except (ValueError, TypeError):
+        return ""
+
+def get_country_iso_code(country_name: str) -> str:
+    """Automatically get ISO code for any country name using pycountry"""
+    if not country_name:
+        return ""
+    try:
+        country = pycountry.countries.get(name=country_name)
+        if country:
+            return country.alpha_2
+    except (KeyError, AttributeError):
+        pass
+    try:
+        results = pycountry.countries.search_fuzzy(country_name)
+        if results:
+            return results[0].alpha_2
+    except (KeyError, LookupError, AttributeError):
+        pass
+    return ""
+
+def add_flag_to_track(track: str) -> str:
+    """Replace country name in parentheses with flag emoji (automatic)"""
+    if not track or '(' not in track:
+        return track
+    try:
+        track_name = track.split('(')[0].strip()
+        country = track.split('(')[1].split(')')[0].strip()
+        iso_code = get_country_iso_code(country)
+        if iso_code:
+            flag = country_code_to_flag(iso_code)
+            return f"{track_name} {flag}"
+        else:
+            return track
+    except (IndexError, AttributeError):
+        return track
+
 def load_users_data():
     global users_data
     if os.path.exists(USERS_FILE):
@@ -265,7 +313,7 @@ async def send_race_live_notification(bot: Bot, user_id: int, race_id: int, race
     group = user_status.get('group')
     user_lang = user_status.get('gpro_lang', DEFAULT_USER_LANG)
 
-    track = race_data['track']
+    track = add_flag_to_track(race_data['track'])
     race_date = race_data['date']
     race_time = race_date.strftime('%d.%m %H:%M UTC')
 
@@ -300,7 +348,7 @@ async def send_race_replay_notification(bot: Bot, user_id: int, race_id: int, ra
     group = user_status.get('group')
     user_lang = user_status.get('gpro_lang', DEFAULT_USER_LANG)
 
-    track = race_data['track']
+    track = add_flag_to_track(race_data['track'])
     race_date = race_data['date']
     race_time = race_date.strftime('%d.%m %H:%M UTC')
 
@@ -338,7 +386,7 @@ async def send_quali_notification(bot: Bot, user_id: int, race_id: int, race_dat
     if user_status.get('completed_quali') == race_id and notification_type != "manual":
         return
 
-    track = race_data['track']
+    track = add_flag_to_track(race_data['track'])
     race_date = race_data['date']
     quali_close = race_data['quali_close']
 
