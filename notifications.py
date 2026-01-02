@@ -539,6 +539,10 @@ async def send_quali_notification(bot: Bot, user_id: int, race_id: int, race_dat
     track = add_flag_to_track(race_data['track'])
     race_date = race_data['date']
     quali_close = race_data['quali_close']
+    user_lang = user_status.get('gpro_lang', DEFAULT_USER_LANG)
+
+    # Generate qualifying link
+    quali_link = f"https://gpro.net/{user_lang}/Qualify.asp"
 
     if notification_type == "opens_soon":
         emoji = "🆕"
@@ -551,7 +555,7 @@ async def send_quali_notification(bot: Bot, user_id: int, race_id: int, race_dat
             hours_left = (quali_close - now).total_seconds() / 3600
         else:
             hours_left = race_data['hours_left']
-        
+
         if hours_left >= 24:
             time_text = f"{int(hours_left)}h"; emoji = "🔔"
         elif hours_left >= 2:
@@ -577,6 +581,7 @@ async def send_quali_notification(bot: Bot, user_id: int, race_id: int, race_dat
             f"🏁 **Race #{race_id}**\n"
             f"📍 **{track}**\n"
             f"📅 **Quali: {deadline} | Race: {race_time}**\n\n"
+            f"🔗 [Go to Qualifying]({quali_link})\n\n"
             f"ℹ️ **Automatic notifications disabled** for this race\n"
             f"Click button to re-enable notifications"
         )
@@ -589,6 +594,7 @@ async def send_quali_notification(bot: Bot, user_id: int, race_id: int, race_dat
             f"🏁 **Race #{race_id}**\n"
             f"📍 **{track}**\n"
             f"📅 **Quali: {deadline} | Race: {race_time}**\n\n"
+            f"🔗 [Go to Qualifying]({quali_link})\n\n"
             f"Click button to disable notifications for this race"
         )
 
