@@ -2,6 +2,7 @@ import json
 import logging
 import re
 import os
+import asyncio
 from datetime import datetime, timedelta
 import aiohttp
 from config import GPRO_API_TOKEN, CALENDAR_FILE, GPRO_LANG, NEXT_SEASON_FILE
@@ -293,18 +294,68 @@ def save_next_season_calendar(calendar: dict):
     """Save next season calendar with atomic write to prevent corruption"""
     _save_calendar_to_file(calendar, NEXT_SEASON_FILE)
 
+async def check_quali_status_from_api() -> dict:
+    """Check real-time qualification status from GPRO /office endpoint
+
+    Returns:
+        dict: {race_id: seconds_left_quali} for races with active quali, empty dict on error
+    """
+    if not GPRO_API_TOKEN:
+        return {}
+
+    url = f"https://gpro.net/{GPRO_LANG}/backend/api/v2/office"
+    headers = {
+        "Authorization": f"Bearer {GPRO_API_TOKEN}",
+        "User-Agent": "GPRO-QualiBot/1.0"
+    }
+
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url, headers=headers, timeout=10) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    seconds_left = data.get('secondsLeftQual')
+
+                    if seconds_left and int(seconds_left) > 0:
+                        # Figure out which race this quali is for
+                        # by matching quali close time
+                        seconds = int(seconds_left)
+                        now = datetime.utcnow()
+                        expected_close = now + timedelta(seconds=seconds)
+
+                        # Find matching race (within 1 hour tolerance)
+                        for race_id, race_data in race_calendar.items():
+                            time_diff = abs((race_data['quali_close'] - expected_close).total_seconds())
+                            if time_diff < 3600:  # Within 1 hour
+                                logger.info(f"✅ API: Race {race_id} quali open, {seconds//3600}h remaining")
+                                return {race_id: seconds}
+
+                        logger.debug(f"API returned secondsLeftQual={seconds} but no matching race found")
+                    else:
+                        logger.debug("API: No active qualification")
+                    return {}
+                else:
+                    logger.warning(f"Office API returned {resp.status}")
+                    return {}
+    except asyncio.TimeoutError:
+        logger.warning("Office API timeout")
+        return {}
+    except Exception as e:
+        logger.error(f"Office API error: {e}")
+        return {}
+
 def get_races_closing_soon(hours_before: float = 720) -> dict:
     """Get races closing within 30 days - SORTED by time!"""
     now = datetime.utcnow()
     upcoming = {}
-    
+
     for race_id, data in race_calendar.items():
         time_to_close = (data['quali_close'] - now).total_seconds() / 3600
         if 0 < time_to_close <= hours_before:
             data_copy = data.copy()
             data_copy['hours_left'] = time_to_close
             upcoming[race_id] = data_copy
-    
+
     # Sort by closest first
     sorted_upcoming = dict(sorted(upcoming.items(), key=lambda x: x[1]['hours_left']))
     logger.debug(f"Upcoming races ({len(sorted_upcoming)}): {list(sorted_upcoming.keys())}")

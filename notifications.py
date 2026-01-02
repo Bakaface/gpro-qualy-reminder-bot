@@ -6,7 +6,7 @@ import re
 from typing import Dict
 from aiogram import Bot
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
-from gpro_calendar import get_races_closing_soon, race_calendar
+from gpro_calendar import get_races_closing_soon, race_calendar, check_quali_status_from_api
 from datetime import datetime, timedelta
 
 logger = logging.getLogger(__name__)
@@ -28,10 +28,14 @@ GPRO_REPLAY_ENDPOINT = "racescreen.asp"
 
 # Timing constants
 CHECK_INTERVAL_SECONDS = 300  # 5 minutes between notification checks
-QUALI_OPENS_AFTER_RACE_HOURS = 2.5  # Qualification opens 2.5h after previous race
-QUALI_OPENS_NOTIFICATION_WINDOW_MINUTES = 15  # Send "quali open" notification within 15min
 RACE_LIVE_NOTIFICATION_WINDOW_MINUTES = 10  # Send "race live" notification within 10min
 NOTIFICATION_HISTORY_RETENTION_DAYS = 30  # Keep notification history for 30 days
+
+# API polling configuration for quali opening detection
+API_CHECK_START_HOURS = 2  # Start checking API 2 hours after race
+API_CHECK_END_HOURS = 3.5  # Stop checking and send fallback at 3.5 hours
+API_CHECK_INTERVAL_MINUTES = 10  # Check API every 10 minutes
+FALLBACK_TOLERANCE_MINUTES = 15  # Send fallback within 15min of reaching 3.5h
 
 # Use absolute path based on script location for robustness
 _SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -333,6 +337,7 @@ async def send_quali_notification(bot: Bot, user_id: int, race_id: int, race_dat
 
 notification_lock = asyncio.Lock()
 notify_history = {}  # {(race_id, window): sent_timestamp}
+last_api_check_time = None  # Track last API check to limit calls
 
 
 def _check_quali_closing_notifications(now: datetime) -> list:
@@ -364,17 +369,28 @@ def _check_quali_closing_notifications(now: datetime) -> list:
     return notifications
 
 
-def _check_quali_open_notifications(now: datetime) -> list:
-    """Check for qualifications that just opened
+async def _check_quali_open_notifications(now: datetime) -> list:
+    """Check for qualifications that just opened using API when appropriate
 
     Returns:
         list: Notifications to send [(type, race_id, race_data, label, history_key), ...]
     """
+    global last_api_check_time
     notifications = []
+
+    # Determine if we should check the API
+    should_check_api = False
+    races_in_polling_window = []
+    races_for_fallback = []
 
     for race_id, race_data in race_calendar.items():
         # Skip race 1 (no previous race)
         if race_id == 1:
+            continue
+
+        # Check if already notified
+        history_key = (race_id, "opens_soon")
+        if history_key in notify_history:
             continue
 
         # Find previous race
@@ -383,20 +399,55 @@ def _check_quali_open_notifications(now: datetime) -> list:
             continue
 
         prev_race_time = race_calendar[prev_race_id]['date']
-        opens_time = prev_race_time + timedelta(hours=QUALI_OPENS_AFTER_RACE_HOURS)
-        time_since_opens = (now - opens_time).total_seconds() / 60
+        hours_since_race = (now - prev_race_time).total_seconds() / 3600
 
-        # Send if we're within window after quali opens
-        if 0 <= time_since_opens <= QUALI_OPENS_NOTIFICATION_WINDOW_MINUTES:
+        # Check if we're in the API polling window (2-3.5 hours after race)
+        if API_CHECK_START_HOURS <= hours_since_race <= API_CHECK_END_HOURS:
+            races_in_polling_window.append((race_id, race_data, prev_race_id, hours_since_race))
+            should_check_api = True
+        # Check if we've reached fallback time (3.5 hours, within tolerance)
+        elif hours_since_race > API_CHECK_END_HOURS:
+            minutes_since_fallback = (hours_since_race - API_CHECK_END_HOURS) * 60
+            if minutes_since_fallback <= FALLBACK_TOLERANCE_MINUTES:
+                races_for_fallback.append((race_id, race_data, prev_race_id, hours_since_race))
+
+    # Check API if needed (rate limited to every 10 minutes)
+    api_result = {}
+    if should_check_api:
+        # Only call API every 10 minutes
+        if last_api_check_time is None or (now - last_api_check_time).total_seconds() >= API_CHECK_INTERVAL_MINUTES * 60:
+            logger.info(f"🔍 Checking API for quali open status ({len(races_in_polling_window)} races in window)")
+            api_result = await check_quali_status_from_api()
+            last_api_check_time = now
+        else:
+            time_until_next = API_CHECK_INTERVAL_MINUTES * 60 - (now - last_api_check_time).total_seconds()
+            logger.debug(f"API check skipped (next in {int(time_until_next)}s)")
+
+    # Process results from API
+    for race_id, race_data, prev_race_id, hours_since in races_in_polling_window:
+        if race_id in api_result:
+            # API confirmed quali is open!
+            logger.info(f"🆕 API confirmed: Race {race_id} quali opened!")
             history_key = (race_id, "opens_soon")
-            if history_key not in notify_history:
-                notifications.append(('opens', race_id, race_data, "opens_soon", history_key))
+            notifications.append(('opens', race_id, race_data, "opens_soon", history_key))
 
             # Also send race replay notification for the previous race
             replay_history_key = (prev_race_id, "race_replay")
             if replay_history_key not in notify_history:
                 prev_race_data = race_calendar[prev_race_id]
                 notifications.append(('replay', prev_race_id, prev_race_data, "race_replay", replay_history_key))
+
+    # Fallback: Send notification if we've reached 3.5h without API detection
+    for race_id, race_data, prev_race_id, hours_since in races_for_fallback:
+        logger.info(f"⏰ Fallback: Sending quali open for race {race_id} at {hours_since:.1f}h (API didn't detect)")
+        history_key = (race_id, "opens_soon")
+        notifications.append(('opens', race_id, race_data, "opens_soon", history_key))
+
+        # Also send race replay notification for the previous race
+        replay_history_key = (prev_race_id, "race_replay")
+        if replay_history_key not in notify_history:
+            prev_race_data = race_calendar[prev_race_id]
+            notifications.append(('replay', prev_race_id, prev_race_data, "race_replay", replay_history_key))
 
     return notifications
 
@@ -470,7 +521,7 @@ async def check_notifications(bot: Bot):
                 # Check all notification types
                 notifications_to_send = []
                 notifications_to_send.extend(_check_quali_closing_notifications(now))
-                notifications_to_send.extend(_check_quali_open_notifications(now))
+                notifications_to_send.extend(await _check_quali_open_notifications(now))
                 notifications_to_send.extend(_check_race_live_notifications(now))
 
                 # Clean old history entries
