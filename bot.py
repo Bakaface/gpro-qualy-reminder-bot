@@ -25,6 +25,10 @@ logging.basicConfig(
         RotatingFileHandler(_LOG_FILE, maxBytes=10*1024*1024, backupCount=5)
     ]
 )
+
+# Reduce verbosity for aiogram event logs (they spam on every interaction)
+logging.getLogger('aiogram.event').setLevel(logging.WARNING)
+
 logger = logging.getLogger(__name__)
 
 async def main():
