@@ -8,7 +8,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from datetime import datetime
 from gpro_calendar import race_calendar, next_season_calendar, get_races_closing_soon, update_calendar, load_next_season_silent
-from notifications import get_user_status, mark_quali_done, reset_user_status, set_user_group, toggle_notification, is_notification_enabled, users_data, save_users_data, send_quali_notification
+from notifications import get_user_status, mark_quali_done, reset_user_status, set_user_group, toggle_notification, is_notification_enabled, users_data, save_users_data, send_quali_notification, LANGUAGE_OPTIONS, set_user_language, get_user_language
 from config import ADMIN_USER_IDS
 
 logger = logging.getLogger(__name__)
@@ -127,6 +127,55 @@ def format_time_until_quali(quali_close):
         hours = math.floor(total_hours)
         return f"{hours}h"  # "23h"
 
+def build_language_keyboard(page: int = 1, current_lang: str = 'gb') -> InlineKeyboardMarkup:
+    """Build paginated language selection keyboard
+
+    Args:
+        page: Page number (1-4)
+        current_lang: User's current language code
+
+    Returns:
+        InlineKeyboardMarkup with language options and navigation
+    """
+    # Language codes distributed across 4 pages (31 total)
+    pages = [
+        ['gb', 'de', 'es', 'ro', 'it', 'fr', 'pl', 'bg'],
+        ['mk', 'nl', 'fi', 'hu', 'tr', 'gr', 'dk', 'pt'],
+        ['ru', 'rs', 'se', 'lt', 'ee', 'al', 'hr', 'ch'],
+        ['my', 'in', 'pi', 'be', 'br', 'cz', 'sk']
+    ]
+
+    buttons = []
+
+    # Language selection buttons
+    for lang_code in pages[page - 1]:
+        is_current = lang_code == current_lang
+        prefix = "✅ " if is_current else ""
+        button_text = f"{prefix}{LANGUAGE_OPTIONS[lang_code]}"
+        buttons.append([InlineKeyboardButton(
+            text=button_text,
+            callback_data=f"lang_{lang_code}"
+        )])
+
+    # Add reset button on last page
+    if page == len(pages):
+        buttons.append([InlineKeyboardButton(
+            text="🔄 Reset to Default (English)",
+            callback_data="lang_reset_default"
+        )])
+
+    # Navigation footer
+    footer = []
+    if page > 1:
+        footer.append(InlineKeyboardButton(text="◀ Previous", callback_data=f"lang_page_{page-1}"))
+    footer.append(InlineKeyboardButton(text="🏠 Main Menu", callback_data="lang_back_main"))
+    if page < len(pages):
+        footer.append(InlineKeyboardButton(text="Next ▶", callback_data=f"lang_page_{page+1}"))
+
+    buttons.append(footer)
+
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
 @router.message(Command("start"))
 async def cmd_start(message: Message):
     user_id = message.from_user.id
@@ -196,9 +245,19 @@ async def cmd_settings(message: Message):
     user_id = message.from_user.id
     user_status = get_user_status(user_id)
     notifications = user_status.get('notifications', {})
+    current_lang = user_status.get('gpro_lang', 'gb')
 
     # Build inline keyboard with toggle buttons
     keyboard_buttons = []
+
+    # Add language settings button at the top
+    lang_display = LANGUAGE_OPTIONS.get(current_lang, current_lang)
+    keyboard_buttons.append([InlineKeyboardButton(
+        text=f"🌍 Language: {lang_display}",
+        callback_data="lang_menu"
+    )])
+
+    # Notification toggles
     for notif_type, label in NOTIFICATION_LABELS.items():
         enabled = notifications.get(notif_type, True)
         icon = "✅" if enabled else "❌"
@@ -485,5 +544,155 @@ async def handle_reset(callback: CallbackQuery):
         reset_user_status(callback.from_user.id)
         await callback.message.edit_text(callback.message.text + "\n\n🔄 *Notifications re-enabled!*")
         await callback.answer("🔄 Re-enabled!")
+
+@router.callback_query(F.data == "lang_menu")
+async def handle_language_menu(callback: CallbackQuery):
+    """Open language selection menu (page 1)"""
+    user_id = callback.from_user.id
+    current_lang = get_user_language(user_id)
+
+    keyboard = build_language_keyboard(page=1, current_lang=current_lang)
+
+    await callback.message.edit_text(
+        f"🌍 **Language Settings**\n\n"
+        f"Current: {LANGUAGE_OPTIONS.get(current_lang, current_lang)}\n\n"
+        f"Select your preferred language for GPRO race links:",
+        reply_markup=keyboard,
+        parse_mode='Markdown'
+    )
+    await callback.answer()
+
+@router.callback_query(F.data.startswith("lang_page_"))
+async def handle_language_page(callback: CallbackQuery):
+    """Handle language pagination"""
+    user_id = callback.from_user.id
+    current_lang = get_user_language(user_id)
+
+    try:
+        page = int(callback.data.split("_")[2])
+    except (ValueError, IndexError):
+        await callback.answer("❌ Invalid page", show_alert=True)
+        return
+
+    keyboard = build_language_keyboard(page=page, current_lang=current_lang)
+
+    await callback.message.edit_reply_markup(reply_markup=keyboard)
+    await callback.answer()
+
+@router.callback_query(F.data.startswith("lang_") & ~F.data.in_(["lang_menu", "lang_back_main", "lang_reset_default"]))
+async def handle_language_select(callback: CallbackQuery):
+    """Handle language selection"""
+    user_id = callback.from_user.id
+
+    # Extract language code from callback data (e.g., "lang_de" -> "de")
+    lang_code = callback.data.replace("lang_", "")
+
+    # Handle pagination separately (already handled by handle_language_page)
+    if lang_code.startswith("page_"):
+        return
+
+    # Set user language
+    if set_user_language(user_id, lang_code):
+        lang_display = LANGUAGE_OPTIONS.get(lang_code, lang_code)
+
+        # Get current page to rebuild keyboard with updated selection
+        current_lang = get_user_language(user_id)
+        # Determine which page this language is on
+        pages = [
+            ['gb', 'de', 'es', 'ro', 'it', 'fr', 'pl', 'bg'],
+            ['mk', 'nl', 'fi', 'hu', 'tr', 'gr', 'dk', 'pt'],
+            ['ru', 'rs', 'se', 'lt', 'ee', 'al', 'hr', 'ch'],
+            ['my', 'in', 'pi', 'be', 'br', 'cz', 'sk']
+        ]
+        current_page = 1
+        for i, page_langs in enumerate(pages, 1):
+            if lang_code in page_langs:
+                current_page = i
+                break
+
+        keyboard = build_language_keyboard(page=current_page, current_lang=current_lang)
+
+        await callback.message.edit_text(
+            f"🌍 **Language Settings**\n\n"
+            f"Current: {lang_display}\n\n"
+            f"Select your preferred language for GPRO race links:",
+            reply_markup=keyboard,
+            parse_mode='Markdown'
+        )
+        await callback.answer(f"✅ Language set to {lang_display}")
+    else:
+        await callback.answer("❌ Invalid language", show_alert=True)
+
+@router.callback_query(F.data == "lang_reset_default")
+async def handle_language_reset(callback: CallbackQuery):
+    """Reset language to default (English GB)"""
+    user_id = callback.from_user.id
+
+    if set_user_language(user_id, 'gb'):
+        keyboard = build_language_keyboard(page=1, current_lang='gb')
+
+        await callback.message.edit_text(
+            f"🌍 **Language Settings**\n\n"
+            f"Current: {LANGUAGE_OPTIONS['gb']}\n\n"
+            f"Select your preferred language for GPRO race links:",
+            reply_markup=keyboard,
+            parse_mode='Markdown'
+        )
+        await callback.answer("✅ Language reset to English")
+    else:
+        await callback.answer("❌ Reset failed", show_alert=True)
+
+@router.callback_query(F.data == "lang_back_main")
+async def handle_language_back(callback: CallbackQuery):
+    """Return to main settings menu"""
+    user_id = callback.from_user.id
+    user_status = get_user_status(user_id)
+    notifications = user_status.get('notifications', {})
+    current_lang = user_status.get('gpro_lang', 'gb')
+
+    # Rebuild main settings keyboard
+    keyboard_buttons = []
+
+    # Language button
+    lang_display = LANGUAGE_OPTIONS.get(current_lang, current_lang)
+    keyboard_buttons.append([InlineKeyboardButton(
+        text=f"🌍 Language: {lang_display}",
+        callback_data="lang_menu"
+    )])
+
+    # Notification toggles
+    for notif_type, label in NOTIFICATION_LABELS.items():
+        enabled = notifications.get(notif_type, True)
+        icon = "✅" if enabled else "❌"
+        button_text = f"{icon} {label}"
+        keyboard_buttons.append([InlineKeyboardButton(
+            text=button_text,
+            callback_data=f"toggle_{notif_type}"
+        )])
+
+    # Enable/Disable All button
+    all_enabled = all(notifications.get(t, True) for t in NOTIFICATION_LABELS.keys())
+    if all_enabled:
+        keyboard_buttons.append([InlineKeyboardButton(
+            text="🔕 Disable All Notifications",
+            callback_data="toggle_all_off"
+        )])
+    else:
+        keyboard_buttons.append([InlineKeyboardButton(
+            text="🔔 Enable All Notifications",
+            callback_data="toggle_all_on"
+        )])
+
+    keyboard = InlineKeyboardMarkup(inline_keyboard=keyboard_buttons)
+
+    await callback.message.edit_text(
+        "⚙️ **Notification Settings**\n\n"
+        "Click to toggle notifications on/off:\n"
+        "✅ = Enabled | ❌ = Disabled\n\n"
+        "ℹ️ *These are global switches for all races. Use the 'Quali Done' button in notifications to disable a specific race.*",
+        reply_markup=keyboard,
+        parse_mode='Markdown'
+    )
+    await callback.answer()
 
 logger.info("✅ handlers.py loaded - Aiogram 3.x Router ready (/setgroup + race live notifications added)")

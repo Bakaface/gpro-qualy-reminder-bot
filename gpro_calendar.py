@@ -5,7 +5,7 @@ import os
 import asyncio
 from datetime import datetime, timedelta
 import aiohttp
-from config import GPRO_API_TOKEN, CALENDAR_FILE, GPRO_LANG, NEXT_SEASON_FILE
+from config import GPRO_API_TOKEN, CALENDAR_FILE, GPRO_API_LANG, NEXT_SEASON_FILE
 
 logger = logging.getLogger(__name__)
 
@@ -125,7 +125,7 @@ async def update_calendar() -> bool:
         logger.error("❌ GPRO_API_TOKEN missing")
         return False
         
-    url = f"https://gpro.net/{GPRO_LANG}/backend/api/v2/Calendar"
+    url = f"https://gpro.net/{GPRO_API_LANG}/backend/api/v2/Calendar"
     headers = {
         "Authorization": f"Bearer {GPRO_API_TOKEN}",
         "User-Agent": "GPRO-QualiBot/1.0"
@@ -303,7 +303,7 @@ async def check_quali_status_from_api() -> dict:
     if not GPRO_API_TOKEN:
         return {}
 
-    url = f"https://gpro.net/{GPRO_LANG}/backend/api/v2/office"
+    url = f"https://gpro.net/{GPRO_API_LANG}/backend/api/v2/office"
     headers = {
         "Authorization": f"Bearer {GPRO_API_TOKEN}",
         "User-Agent": "GPRO-QualiBot/1.0"

@@ -27,6 +27,7 @@ pytest.ini
 # IDE
 .vscode/
 .idea/
+.claude/
 
 # OS
 .DS_Store

@@ -22,9 +22,24 @@ NOTIFICATION_WINDOWS = [
 ]
 
 # GPRO URL endpoints
-GPRO_BASE_URL = "https://gpro.net/gb"
 GPRO_LIVE_ENDPOINT = "racescreenlive.asp"
 GPRO_REPLAY_ENDPOINT = "racescreen.asp"
+
+# Language options for URL generation (user-facing)
+LANGUAGE_OPTIONS = {
+    'gb': '🇬🇧 English', 'de': '🇩🇪 Deutsch', 'es': '🇪🇸 Español',
+    'ro': '🇷🇴 Română', 'it': '🇮🇹 Italiano', 'fr': '🇫🇷 Français',
+    'pl': '🇵🇱 Polski', 'bg': '🇧🇬 Български', 'mk': '🇲🇰 Македонски',
+    'nl': '🇳🇱 Nederlands', 'fi': '🇫🇮 Suomi', 'hu': '🇭🇺 Magyar',
+    'tr': '🇹🇷 Türkçe', 'gr': '🇬🇷 Ελληνικά', 'dk': '🇩🇰 Dansk',
+    'pt': '🇵🇹 Português', 'ru': '🇷🇺 Русский', 'rs': '🇷🇸 Српски',
+    'se': '🇸🇪 Svenska', 'lt': '🇱🇹 Lietuvių', 'ee': '🇪🇪 Eesti',
+    'al': '🇦🇱 Shqip', 'hr': '🇭🇷 Hrvatski', 'ch': '🇨🇳 中文',
+    'my': '🇲🇾 Bahasa Melayu', 'in': '🇮🇳 हिन्दी', 'pi': '🏴‍☠️ Pirate',
+    'be': '🇧🇪 Vlaams', 'br': '🇧🇷 Português (BR)', 'cz': '🇨🇿 Čeština',
+    'sk': '🇸🇰 Slovenčina'
+}
+DEFAULT_USER_LANG = 'gb'
 
 # Timing constants
 CHECK_INTERVAL_SECONDS = 300  # 5 minutes between notification checks
@@ -103,7 +118,8 @@ def get_user_status(user_id: int) -> Dict:
         users_data[user_id] = {
             'completed_quali': None,
             'group': None,
-            'notifications': get_default_notification_preferences()
+            'notifications': get_default_notification_preferences(),
+            'gpro_lang': DEFAULT_USER_LANG
         }
         save_users_data()
     else:
@@ -117,6 +133,10 @@ def get_user_status(user_id: int) -> Dict:
         if 'notifications' not in users_data[user_id]:
             users_data[user_id]['notifications'] = get_default_notification_preferences()
             logger.debug(f"Added 'notifications' field to user {user_id}")
+            needs_save = True
+        if 'gpro_lang' not in users_data[user_id]:
+            users_data[user_id]['gpro_lang'] = DEFAULT_USER_LANG
+            logger.debug(f"Added 'gpro_lang' field to user {user_id}")
             needs_save = True
 
         # Save only once if any migrations were applied
@@ -147,18 +167,61 @@ def is_notification_enabled(user_id: int, notification_type: str) -> bool:
     user_status = get_user_status(user_id)
     return user_status['notifications'].get(notification_type, True)
 
-def generate_gpro_link(group: str, link_type: str = 'live') -> str:
+def is_valid_language(lang_code: str) -> bool:
+    """Validate language code against supported languages"""
+    return lang_code in LANGUAGE_OPTIONS
+
+def set_user_language(user_id: int, lang: str) -> bool:
+    """Set user's preferred language for GPRO URLs
+
+    Args:
+        user_id: Telegram user ID
+        lang: Language code (e.g., 'gb', 'de', 'fr')
+
+    Returns:
+        bool: True if language was set successfully, False if invalid
+    """
+    lang = lang.strip().lower()
+    if not is_valid_language(lang):
+        logger.warning(f"Invalid language code: {lang}")
+        return False
+
+    get_user_status(user_id)
+    users_data[user_id]['gpro_lang'] = lang
+    save_users_data()
+    logger.info(f"User {user_id} set language to: {lang}")
+    return True
+
+def get_user_language(user_id: int) -> str:
+    """Get user's preferred language for GPRO URLs
+
+    Args:
+        user_id: Telegram user ID
+
+    Returns:
+        str: Language code (defaults to 'gb' if not set)
+    """
+    user_status = get_user_status(user_id)
+    return user_status.get('gpro_lang', DEFAULT_USER_LANG)
+
+def generate_gpro_link(group: str, lang: str = 'gb', link_type: str = 'live') -> str:
     """Generate GPRO race link based on group format and type
 
     Args:
         group: User's GPRO group (E, M12, R11, etc.)
+        lang: Language code for URL (e.g., 'gb', 'de', 'fr')
         link_type: 'live' for live race, 'replay' for replay
 
     Examples: E → Elite, M12 → Master - 12, R11 → Rookie - 11"""
 
+    # Validate and fallback for language
+    if not is_valid_language(lang):
+        logger.warning(f"Invalid language code '{lang}', falling back to 'gb'")
+        lang = 'gb'
+
     # Determine endpoint based on link type
     endpoint = GPRO_LIVE_ENDPOINT if link_type == 'live' else GPRO_REPLAY_ENDPOINT
-    base_url = f"{GPRO_BASE_URL}/{endpoint}?Group="
+    base_url = f"https://gpro.net/{lang}/{endpoint}?Group="
 
     if not group:
         return base_url
@@ -188,24 +251,25 @@ def generate_gpro_link(group: str, link_type: str = 'live') -> str:
     encoded = f"{group_name}%20-%20{number}"
     return f"{base_url}{encoded}"
 
-def generate_race_link(group: str) -> str:
+def generate_race_link(group: str, lang: str = 'gb') -> str:
     """Generate race live link - wrapper for backwards compatibility"""
-    return generate_gpro_link(group, 'live')
+    return generate_gpro_link(group, lang, 'live')
 
-def generate_replay_link(group: str) -> str:
+def generate_replay_link(group: str, lang: str = 'gb') -> str:
     """Generate race replay link - wrapper for backwards compatibility"""
-    return generate_gpro_link(group, 'replay')
+    return generate_gpro_link(group, lang, 'replay')
 
 async def send_race_live_notification(bot: Bot, user_id: int, race_id: int, race_data: Dict):
     """Send notification when race goes live"""
     user_status = get_user_status(user_id)
     group = user_status.get('group')
+    user_lang = user_status.get('gpro_lang', DEFAULT_USER_LANG)
 
     track = race_data['track']
     race_date = race_data['date']
     race_time = race_date.strftime('%d.%m %H:%M UTC')
 
-    race_link = generate_race_link(group)
+    race_link = generate_race_link(group, user_lang)
 
     # Build message based on whether group is set
     if group:
@@ -234,12 +298,13 @@ async def send_race_replay_notification(bot: Bot, user_id: int, race_id: int, ra
     """Send race replay notification when next quali opens"""
     user_status = get_user_status(user_id)
     group = user_status.get('group')
+    user_lang = user_status.get('gpro_lang', DEFAULT_USER_LANG)
 
     track = race_data['track']
     race_date = race_data['date']
     race_time = race_date.strftime('%d.%m %H:%M UTC')
 
-    replay_link = generate_replay_link(group)
+    replay_link = generate_replay_link(group, user_lang)
 
     # Build message based on whether group is set
     if group:

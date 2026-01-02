@@ -32,4 +32,4 @@ except ValueError as e:
 _SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 NEXT_SEASON_FILE = os.path.join(_SCRIPT_DIR, 'next_season_calendar.json')
 CALENDAR_FILE = os.path.join(_SCRIPT_DIR, 'gpro_calendar.json')
-GPRO_LANG = 'gb'
+GPRO_API_LANG = 'gb'
