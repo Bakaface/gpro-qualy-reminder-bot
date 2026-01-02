@@ -1,14 +1,20 @@
 import logging
 import math
+import re
 from aiogram import Router, F
 from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.filters import Command
+from aiogram.fsm.context import FSMContext
+from aiogram.fsm.state import State, StatesGroup
 from datetime import datetime
 from gpro_calendar import race_calendar, next_season_calendar, get_races_closing_soon, update_calendar
-from notifications import get_user_status, mark_quali_done, reset_user_status
+from notifications import get_user_status, mark_quali_done, reset_user_status, set_user_group, toggle_notification, is_notification_enabled
 
 logger = logging.getLogger(__name__)
 router = Router()
+
+class SetGroupStates(StatesGroup):
+    waiting_for_group = State()
 
 
 def format_full_calendar(calendar_data, title="Full Season", is_current_season=True):
@@ -113,17 +119,120 @@ def format_time_until_quali(quali_close):
 async def cmd_start(message: Message):
     from notifications import get_user_status, users_data
     user_id = message.from_user.id
-    
+
     # Check BEFORE adding
     was_new = user_id not in users_data
     get_user_status(user_id)
-    
+
     if was_new:
         logger.info(f"🆕 NEW user {user_id} registered via /start")
     else:
         logger.debug(f"👤 Existing user {user_id} used /start")
-    
-    await message.answer("🏁 GPRO Bot LIVE!\n/status - Next race\n/calendar - Full season\n/next - Next season\n/notify - Test alert")
+
+    await message.answer("🏁 GPRO Bot LIVE!\n/status - Next race\n/calendar - Full season\n/next - Next season\n/setgroup - Set your race group\n/settings - Notification preferences\n/notify - Test alert")
+
+@router.message(Command("setgroup"))
+async def cmd_setgroup(message: Message, state: FSMContext):
+    """Start group setup process"""
+    await state.set_state(SetGroupStates.waiting_for_group)
+    await message.answer(
+        "🏁 **Set Your GPRO Group**\n\n"
+        "Enter your group in one of these formats:\n"
+        "• **E** (Elite)\n"
+        "• **M12** (Master 12)\n"
+        "• **P3** (Pro 3)\n"
+        "• **A5** (Amateur 5)\n"
+        "• **R11** (Rookie 11)\n\n"
+        "Numbers can be 1-3 digits.",
+        parse_mode='Markdown'
+    )
+
+@router.message(SetGroupStates.waiting_for_group)
+async def process_group_input(message: Message, state: FSMContext):
+    """Process user's group input"""
+    group_input = message.text.strip().upper()
+
+    # Validate format: E or M/P/A/R followed by 1-3 digits
+    if group_input == 'E':
+        valid = True
+    elif re.match(r'^[MPAR]\d{1,3}$', group_input):
+        valid = True
+    else:
+        await message.answer(
+            "❌ Invalid format!\n\n"
+            "Please use:\n"
+            "• **E** for Elite\n"
+            "• **M12**, **P3**, **A5**, **R11** etc.\n\n"
+            "Try again:",
+            parse_mode='Markdown'
+        )
+        return
+
+    # Save the group
+    set_user_group(message.from_user.id, group_input)
+    await state.clear()
+
+    # Show confirmation with example link
+    from notifications import generate_race_link
+    example_link = generate_race_link(group_input)
+
+    await message.answer(
+        f"✅ **Group set to: {group_input}**\n\n"
+        f"You'll receive race live notifications with your group link!\n\n"
+        f"Example: {example_link}",
+        parse_mode='Markdown'
+    )
+
+@router.message(Command("settings"))
+async def cmd_settings(message: Message):
+    """Show notification settings menu"""
+    user_id = message.from_user.id
+    user_status = get_user_status(user_id)
+    notifications = user_status.get('notifications', {})
+
+    # Build inline keyboard with toggle buttons
+    notification_labels = {
+        '48h': '48h before quali closes',
+        '24h': '24h before quali closes',
+        '2h': '2h before quali closes',
+        '10min': '10min before quali closes',
+        'opens_soon': 'Quali is open',
+        'race_replay': 'Race replay available',
+        'race_live': 'Race is live'
+    }
+
+    keyboard_buttons = []
+    for notif_type, label in notification_labels.items():
+        enabled = notifications.get(notif_type, True)
+        icon = "✅" if enabled else "❌"
+        button_text = f"{icon} {label}"
+        keyboard_buttons.append([InlineKeyboardButton(
+            text=button_text,
+            callback_data=f"toggle_{notif_type}"
+        )])
+
+    # Add "Enable All" / "Disable All" button
+    all_enabled = all(notifications.get(t, True) for t in notification_labels.keys())
+    if all_enabled:
+        keyboard_buttons.append([InlineKeyboardButton(
+            text="🔕 Disable All Notifications",
+            callback_data="toggle_all_off"
+        )])
+    else:
+        keyboard_buttons.append([InlineKeyboardButton(
+            text="🔔 Enable All Notifications",
+            callback_data="toggle_all_on"
+        )])
+
+    keyboard = InlineKeyboardMarkup(inline_keyboard=keyboard_buttons)
+
+    await message.answer(
+        "⚙️ **Notification Settings**\n\n"
+        "Click to toggle notifications on/off:\n"
+        "✅ = Enabled | ❌ = Disabled",
+        reply_markup=keyboard,
+        parse_mode='Markdown'
+    )
 
 @router.message(Command("status"))
 async def cmd_status(message: Message):
@@ -279,6 +388,91 @@ async def cmd_users(message: Message):
         logger.error(f"USERS ERROR: {e}")
         await message.answer("❌ Error loading user data", parse_mode='Markdown')
 
+@router.callback_query(F.data.startswith("toggle_"))
+async def handle_toggle_notification(callback: CallbackQuery):
+    """Handle notification toggle button clicks"""
+    user_id = callback.from_user.id
+
+    # Handle "Enable All" / "Disable All"
+    if callback.data == "toggle_all_on":
+        from notifications import users_data
+        user_status = get_user_status(user_id)
+        for notif_type in user_status['notifications'].keys():
+            user_status['notifications'][notif_type] = True
+        from notifications import save_users_data
+        save_users_data()
+        feedback_text = "✅ All notifications enabled!"
+    elif callback.data == "toggle_all_off":
+        from notifications import users_data
+        user_status = get_user_status(user_id)
+        for notif_type in user_status['notifications'].keys():
+            user_status['notifications'][notif_type] = False
+        from notifications import save_users_data
+        save_users_data()
+        feedback_text = "🔕 All notifications disabled!"
+    else:
+        # Toggle individual notification
+        notification_type = callback.data.replace("toggle_", "")
+        new_state = toggle_notification(user_id, notification_type)
+
+        notification_labels = {
+            '48h': '48h before quali closes',
+            '24h': '24h before quali closes',
+            '2h': '2h before quali closes',
+            '10min': '10min before quali closes',
+            'opens_soon': 'Quali is open',
+            'race_replay': 'Race replay available',
+            'race_live': 'Race is live'
+        }
+
+        status_text = "enabled" if new_state else "disabled"
+        feedback_text = f"✅ {notification_labels[notification_type]} {status_text}!"
+
+    # Rebuild the settings menu with updated states
+    user_status = get_user_status(user_id)
+    notifications = user_status.get('notifications', {})
+
+    notification_labels = {
+        '48h': '48h before quali closes',
+        '24h': '24h before quali closes',
+        '2h': '2h before quali closes',
+        '10min': '10min before quali closes',
+        'opens_soon': 'Quali is open',
+        'race_replay': 'Race replay available',
+        'race_live': 'Race is live'
+    }
+
+    keyboard_buttons = []
+    for notif_type, label in notification_labels.items():
+        enabled = notifications.get(notif_type, True)
+        icon = "✅" if enabled else "❌"
+        button_text = f"{icon} {label}"
+        keyboard_buttons.append([InlineKeyboardButton(
+            text=button_text,
+            callback_data=f"toggle_{notif_type}"
+        )])
+
+    # Add "Enable All" / "Disable All" button
+    all_enabled = all(notifications.get(t, True) for t in notification_labels.keys())
+    if all_enabled:
+        keyboard_buttons.append([InlineKeyboardButton(
+            text="🔕 Disable All Notifications",
+            callback_data="toggle_all_off"
+        )])
+    else:
+        keyboard_buttons.append([InlineKeyboardButton(
+            text="🔔 Enable All Notifications",
+            callback_data="toggle_all_on"
+        )])
+
+    keyboard = InlineKeyboardMarkup(inline_keyboard=keyboard_buttons)
+
+    # Update the message
+    await callback.message.edit_reply_markup(reply_markup=keyboard)
+
+    # Show feedback
+    await callback.answer(feedback_text)
+
 @router.callback_query(F.data.startswith("done_"))
 async def handle_quali_done(callback: CallbackQuery):
     race_id = int(callback.data.split("_")[1])
@@ -299,4 +493,4 @@ async def handle_reset(callback: CallbackQuery):
         await callback.message.edit_text(callback.message.text + "\n\n🔄 *Notifications re-enabled!*")
         await callback.answer("🔄 Re-enabled!")
 
-logger.info("✅ handlers.py loaded - Aiogram 3.x Router ready (/next added)")
+logger.info("✅ handlers.py loaded - Aiogram 3.x Router ready (/setgroup + race live notifications added)")

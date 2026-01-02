@@ -36,23 +36,204 @@ def save_users_data():
     except Exception as e:
         logger.error(f"Save failed: {e}")
 
+def get_default_notification_preferences():
+    """Default notification settings - all enabled by default"""
+    return {
+        '48h': True,
+        '24h': True,
+        '2h': True,
+        '10min': True,
+        'opens_soon': True,
+        'race_replay': True,
+        'race_live': True
+    }
+
 def get_user_status(user_id: int) -> Dict:
     global users_data
     logger.info(f"🔍 DEBUG get_user_status({user_id}): users_data.keys() = {list(users_data.keys())} (len={len(users_data)})")
-    
+
     if not users_data:
         load_users_data()
         logger.info(f"🔍 AFTER load_users_data(): users_data.keys() = {list(users_data.keys())}")
-    
+
     if user_id not in users_data:
         logger.warning(f"🚨 ADDING NEW user {user_id} - NOT FOUND in {list(users_data.keys())}")
-        users_data[user_id] = {'completed_quali': None}
+        users_data[user_id] = {
+            'completed_quali': None,
+            'group': None,
+            'notifications': get_default_notification_preferences()
+        }
         save_users_data()
         logger.info(f"🆕 TRULY NEW user {user_id} added")
     else:
+        # Ensure existing users have required fields (migration)
+        if 'group' not in users_data[user_id]:
+            users_data[user_id]['group'] = None
+            save_users_data()
+            logger.info(f"🔄 Added 'group' field to existing user {user_id}")
+        if 'notifications' not in users_data[user_id]:
+            users_data[user_id]['notifications'] = get_default_notification_preferences()
+            save_users_data()
+            logger.info(f"🔄 Added 'notifications' field to existing user {user_id}")
         logger.info(f"✅ User {user_id} EXISTS - no add")
-    
+
     return users_data[user_id]
+
+def set_user_group(user_id: int, group: str):
+    """Set user's GPRO group for race links"""
+    get_user_status(user_id)
+    users_data[user_id]['group'] = group
+    save_users_data()
+    logger.info(f"User {user_id} set group to: {group}")
+
+def toggle_notification(user_id: int, notification_type: str):
+    """Toggle a specific notification type for a user"""
+    user_status = get_user_status(user_id)
+    current_state = user_status['notifications'].get(notification_type, True)
+    user_status['notifications'][notification_type] = not current_state
+    save_users_data()
+    new_state = "enabled" if not current_state else "disabled"
+    logger.info(f"User {user_id} {new_state} '{notification_type}' notifications")
+    return not current_state
+
+def is_notification_enabled(user_id: int, notification_type: str) -> bool:
+    """Check if a notification type is enabled for a user"""
+    user_status = get_user_status(user_id)
+    return user_status['notifications'].get(notification_type, True)
+
+def generate_race_link(group: str) -> str:
+    """Generate race live link based on group format
+    Examples: E → Elite, M12 → Master - 12, R11 → Rookie - 11"""
+    if not group:
+        return "https://gpro.net/gb/racescreenlive.asp?Group="
+
+    group = group.strip().upper()
+
+    # Elite has no number
+    if group == 'E':
+        return "https://gpro.net/gb/racescreenlive.asp?Group=Elite"
+
+    # Parse group letter and number (e.g., M12, R11, P3, A5)
+    import re
+    match = re.match(r'^([MPAR])(\d{1,3})$', group)
+    if not match:
+        # Invalid format, return default
+        return "https://gpro.net/gb/racescreenlive.asp?Group="
+
+    letter, number = match.groups()
+    group_names = {
+        'M': 'Master',
+        'P': 'Pro',
+        'A': 'Amateur',
+        'R': 'Rookie'
+    }
+
+    group_name = group_names[letter]
+    # URL encode: "Rookie - 11" → "Rookie%20-%2011"
+    encoded = f"{group_name}%20-%20{number}"
+    return f"https://gpro.net/gb/racescreenlive.asp?Group={encoded}"
+
+def generate_replay_link(group: str) -> str:
+    """Generate race replay link based on group format
+    Examples: E → Elite, M12 → Master - 12, R11 → Rookie - 11"""
+    if not group:
+        return "https://gpro.net/gb/racescreen.asp?Group="
+
+    group = group.strip().upper()
+
+    # Elite has no number
+    if group == 'E':
+        return "https://gpro.net/gb/racescreen.asp?Group=Elite"
+
+    # Parse group letter and number (e.g., M12, R11, P3, A5)
+    import re
+    match = re.match(r'^([MPAR])(\d{1,3})$', group)
+    if not match:
+        # Invalid format, return default
+        return "https://gpro.net/gb/racescreen.asp?Group="
+
+    letter, number = match.groups()
+    group_names = {
+        'M': 'Master',
+        'P': 'Pro',
+        'A': 'Amateur',
+        'R': 'Rookie'
+    }
+
+    group_name = group_names[letter]
+    # URL encode: "Rookie - 11" → "Rookie%20-%2011"
+    encoded = f"{group_name}%20-%20{number}"
+    return f"https://gpro.net/gb/racescreen.asp?Group={encoded}"
+
+async def send_race_live_notification(bot: Bot, user_id: int, race_id: int, race_data: Dict):
+    """Send notification when race goes live"""
+    user_status = get_user_status(user_id)
+    group = user_status.get('group')
+
+    track = race_data['track']
+    race_date = race_data['date']
+    race_time = race_date.strftime('%d.%m %H:%M UTC')
+
+    race_link = generate_race_link(group)
+
+    # Build message based on whether group is set
+    if group:
+        message = (
+            f"🏁 **Race #{race_id} is LIVE!**\n\n"
+            f"📍 **{track}**\n"
+            f"🕐 **{race_time}**\n\n"
+            f"🔗 [Watch Live Race]({race_link})"
+        )
+    else:
+        message = (
+            f"🏁 **Race #{race_id} is LIVE!**\n\n"
+            f"📍 **{track}**\n"
+            f"🕐 **{race_time}**\n\n"
+            f"⚠️ Set your group with /setgroup for a direct link!\n\n"
+            f"🔗 [Watch Live Race]({race_link})"
+        )
+
+    try:
+        await bot.send_message(user_id, message, parse_mode='Markdown')
+        logger.info(f"🏁 Sent race live notification to {user_id} for race {race_id}")
+    except Exception as e:
+        logger.error(f"Race live notify {user_id} failed: {e}")
+
+async def send_race_replay_notification(bot: Bot, user_id: int, race_id: int, race_data: Dict):
+    """Send race replay notification when next quali opens"""
+    user_status = get_user_status(user_id)
+    group = user_status.get('group')
+
+    track = race_data['track']
+    race_date = race_data['date']
+    race_time = race_date.strftime('%d.%m %H:%M UTC')
+
+    replay_link = generate_replay_link(group)
+
+    # Build message based on whether group is set
+    if group:
+        message = (
+            f"📺 **Race #{race_id} Replay Available**\n\n"
+            f"📍 **{track}**\n"
+            f"🕐 **{race_time}**\n\n"
+            f"If the race has already been calculated, replay is available here:\n\n"
+            f"🔗 [Watch Replay]({replay_link})"
+        )
+    else:
+        message = (
+            f"📺 **Race #{race_id} Replay Available**\n\n"
+            f"📍 **{track}**\n"
+            f"🕐 **{race_time}**\n\n"
+            f"If the race has already been calculated, replay is available here:\n\n"
+            f"⚠️ For personalized links, use /setgroup to set your group!\n\n"
+            f"🔗 [Watch Replay]({replay_link})"
+        )
+
+    try:
+        await bot.send_message(user_id, message, parse_mode='Markdown')
+        logger.info(f"📺 Sent race replay notification to {user_id} for race {race_id}")
+    except Exception as e:
+        logger.error(f"Race replay notify {user_id} failed: {e}")
 
 async def send_quali_notification(bot: Bot, user_id: int, race_id: int, race_data: Dict, notification_type: str = "deadline"):
     user_status = get_user_status(user_id)
@@ -163,11 +344,14 @@ async def check_notifications(bot: Bot):
                             # Only send if not sent before
                             if history_key not in notify_history:
                                 logger.info(f"🔔 Sending {label} notification for race {race_id}")
+                                sent_count = 0
                                 for user_id in list(users_data.keys()):
-                                    await send_quali_notification(bot, user_id, race_id, race_data, label)
+                                    if is_notification_enabled(user_id, label):
+                                        await send_quali_notification(bot, user_id, race_id, race_data, label)
+                                        sent_count += 1
 
                                 notify_history[history_key] = now
-                                logger.info(f"✅ Sent {label} for race {race_id} to {len(users_data)} users")
+                                logger.info(f"✅ Sent {label} for race {race_id} to {sent_count}/{len(users_data)} users")
 
                 # 2. Check "quali is open" notifications (2.5h after PREVIOUS race time)
                 for race_id, race_data in race_calendar.items():
@@ -190,11 +374,48 @@ async def check_notifications(bot: Bot):
 
                         if history_key not in notify_history:
                             logger.info(f"🆕 Sending 'quali open' notification for race {race_id} (prev race {prev_race_id} at {prev_race_time})")
+                            sent_count = 0
                             for user_id in list(users_data.keys()):
-                                await send_quali_notification(bot, user_id, race_id, race_data, "opens_soon")
+                                if is_notification_enabled(user_id, "opens_soon"):
+                                    await send_quali_notification(bot, user_id, race_id, race_data, "opens_soon")
+                                    sent_count += 1
 
                             notify_history[history_key] = now
-                            logger.info(f"✅ Sent 'opens_soon' for race {race_id}")
+                            logger.info(f"✅ Sent 'opens_soon' for race {race_id} to {sent_count}/{len(users_data)} users")
+
+                        # Also send race replay notification for the previous race
+                        replay_history_key = (prev_race_id, "race_replay")
+                        if replay_history_key not in notify_history:
+                            prev_race_data = race_calendar[prev_race_id]
+                            logger.info(f"📺 Sending 'race replay' notification for race {prev_race_id}")
+                            sent_count = 0
+                            for user_id in list(users_data.keys()):
+                                if is_notification_enabled(user_id, "race_replay"):
+                                    await send_race_replay_notification(bot, user_id, prev_race_id, prev_race_data)
+                                    sent_count += 1
+
+                            notify_history[replay_history_key] = now
+                            logger.info(f"✅ Sent 'race_replay' for race {prev_race_id} to {sent_count}/{len(users_data)} users")
+
+                # 3. Check "race is live" notifications (when race starts at 19:00 UTC)
+                for race_id, race_data in race_calendar.items():
+                    race_time = race_data['date']
+                    time_since_race = (now - race_time).total_seconds() / 60
+
+                    # Send if we're within 10min after race starts (0-10min window)
+                    if 0 <= time_since_race <= 10:
+                        history_key = (race_id, "race_live")
+
+                        if history_key not in notify_history:
+                            logger.info(f"🏁 Sending 'race live' notification for race {race_id} at {race_time}")
+                            sent_count = 0
+                            for user_id in list(users_data.keys()):
+                                if is_notification_enabled(user_id, "race_live"):
+                                    await send_race_live_notification(bot, user_id, race_id, race_data)
+                                    sent_count += 1
+
+                            notify_history[history_key] = now
+                            logger.info(f"✅ Sent 'race_live' for race {race_id} to {sent_count}/{len(users_data)} users")
 
                 # Clean old history entries (keep last 30 days)
                 cutoff = now - timedelta(days=30)
