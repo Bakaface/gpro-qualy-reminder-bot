@@ -22,6 +22,7 @@ env/
 .venv/
 .pytest_cache/
 *.pyc
+pytest.ini
 
 # IDE
 .vscode/
