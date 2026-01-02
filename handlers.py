@@ -129,7 +129,7 @@ async def cmd_start(message: Message):
     else:
         logger.debug(f"👤 Existing user {user_id} used /start")
 
-    await message.answer("🏁 GPRO Bot LIVE!\n/status - Next race\n/calendar - Full season\n/next - Next season\n/setgroup - Set your race group\n/settings - Notification preferences\n/notify - Test alert")
+    await message.answer("🏁 GPRO Bot LIVE!\n/status - Next race\n/calendar - Full season\n/next - Next season\n/setgroup - Set your race group\n/settings - Notification preferences")
 
 @router.message(Command("setgroup"))
 async def cmd_setgroup(message: Message, state: FSMContext):
@@ -229,7 +229,8 @@ async def cmd_settings(message: Message):
     await message.answer(
         "⚙️ **Notification Settings**\n\n"
         "Click to toggle notifications on/off:\n"
-        "✅ = Enabled | ❌ = Disabled",
+        "✅ = Enabled | ❌ = Disabled\n\n"
+        "ℹ️ *These are global switches for all races. Use the 'Quali Done' button in notifications to disable a specific race.*",
         reply_markup=keyboard,
         parse_mode='Markdown'
     )
@@ -247,22 +248,27 @@ async def cmd_status(message: Message):
             next_race = format_race_beautiful(races_soon[0])
     
     status_text = ""
-    if status.get('completed_quali'):
-        race_num = status['completed_quali']
-        status_text = f"✅ **Race {race_num} qualification done**\n*Next race notifications active*"
+    completed_race = status.get('completed_quali')
+
+    if completed_race:
+        status_text = f"✅ **Race {completed_race} qualification done**\n*Next race notifications active*"
     else:
         status_text = "🔔 **Notifications active**"
-    
+
     text = (
         f"🏁 **GPRO Status**\n\n"
         f"🎯 **Next race:**\n{next_race}\n\n"
         f"{status_text}"
     )
-    
-    keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🔄 Reset notifications", callback_data="reset_all")]
-    ])
-    await message.answer(text, reply_markup=keyboard, parse_mode='Markdown')
+
+    # Only show reset button if a race is marked as done
+    if completed_race:
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text=f"🔄 Re-enable Race {completed_race} notifications", callback_data="reset_all")]
+        ])
+        await message.answer(text, reply_markup=keyboard, parse_mode='Markdown')
+    else:
+        await message.answer(text, parse_mode='Markdown')
 
 @router.message(Command("notify"))
 async def cmd_notify(message: Message, bot):

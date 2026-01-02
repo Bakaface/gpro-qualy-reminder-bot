@@ -300,7 +300,7 @@ async def send_quali_notification(bot: Bot, user_id: int, race_id: int, race_dat
 
     if is_marked_done:
         keyboard = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="🔄 Reset Status", callback_data=f"reset_{race_id}")]
+            [InlineKeyboardButton(text=f"🔄 Re-enable Race {race_id} notifications", callback_data=f"reset_{race_id}")]
         ])
         message = (
             f"{emoji} {title}\n\n"
