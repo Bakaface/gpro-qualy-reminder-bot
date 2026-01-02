@@ -6,7 +6,7 @@ import re
 from typing import Dict
 from aiogram import Bot
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
-from gpro_calendar import get_races_closing_soon, race_calendar, check_quali_status_from_api
+from gpro_calendar import get_races_closing_soon, race_calendar, check_quali_status_from_api, fetch_weather_from_api
 from datetime import datetime, timedelta
 
 logger = logging.getLogger(__name__)
@@ -457,6 +457,63 @@ def generate_replay_link(group: str, lang: str = 'gb') -> str:
     """Generate race replay link - wrapper for backwards compatibility"""
     return generate_gpro_link(group, lang, 'replay')
 
+def format_weather_data(weather: dict) -> str:
+    """Format weather data into human-readable text
+
+    Args:
+        weather: Weather data from Practice API
+
+    Returns:
+        str: Formatted weather message
+    """
+    if not weather:
+        return "⚠️ Weather data not available"
+
+    # Practice / Qualify 1
+    q1_weather = weather.get('q1WeatherTransl', weather.get('q1Weather', 'Unknown'))
+    q1_temp = weather.get('q1Temp', '?')
+    q1_hum = weather.get('q1Hum', '?')
+
+    # Qualify 2 / Race Start
+    q2_weather = weather.get('q2WeatherTransl', weather.get('q2Weather', 'Unknown'))
+    q2_temp = weather.get('q2Temp', '?')
+    q2_hum = weather.get('q2Hum', '?')
+
+    message = "🌤️ **Race Weather Forecast**\n\n"
+    message += f"**Practice / Qualify 1:** {q1_weather}\n"
+    message += f"Temp: {q1_temp}°C • Humidity: {q1_hum}%\n\n"
+    message += f"**Qualify 2 / Race Start:** {q2_weather}\n"
+    message += f"Temp: {q2_temp}°C • Humidity: {q2_hum}%\n\n"
+
+    # Race Quarters
+    message += "**Race Conditions:**\n"
+
+    quarters = [
+        ("Start - 0h30m", "raceQ1"),
+        ("0h30m - 1h00m", "raceQ2"),
+        ("1h00m - 1h30m", "raceQ3"),
+        ("1h30m - 2h00m", "raceQ4")
+    ]
+
+    for label, prefix in quarters:
+        temp_low = weather.get(f"{prefix}TempLow", '?')
+        temp_high = weather.get(f"{prefix}TempHigh", '?')
+        hum_low = weather.get(f"{prefix}HumLow", '?')
+        hum_high = weather.get(f"{prefix}HumHigh", '?')
+        rain_low = weather.get(f"{prefix}RainPLow", '?')
+        rain_high = weather.get(f"{prefix}RainPHigh", '?')
+
+        # Format ranges - show single value if min == max
+        temp_str = f"{temp_low}°" if temp_low == temp_high else f"{temp_low}°-{temp_high}°"
+        hum_str = f"{hum_low}%" if hum_low == hum_high else f"{hum_low}%-{hum_high}%"
+        rain_str = f"{rain_low}%" if rain_low == rain_high else f"{rain_low}%-{rain_high}%"
+
+        message += f"\n**{label}:**\n"
+        message += f"Temp: {temp_str} • Humidity: {hum_str}\n"
+        message += f"Rain probability: {rain_str}\n"
+
+    return message
+
 async def send_race_live_notification(bot: Bot, user_id: int, race_id: int, race_data: Dict):
     """Send notification when race goes live"""
     user_status = get_user_status(user_id)
@@ -572,10 +629,17 @@ async def send_quali_notification(bot: Bot, user_id: int, race_id: int, race_dat
     # Check if user already marked this race done
     is_marked_done = user_status.get('completed_quali') == race_id
 
+    # Check if weather data is available
+    has_weather = race_id in race_calendar and 'weather' in race_calendar[race_id]
+
     if is_marked_done:
-        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        keyboard_buttons = [
             [InlineKeyboardButton(text=f"🔄 Re-enable Race {race_id} notifications", callback_data=f"reset_{race_id}")]
-        ])
+        ]
+        if has_weather:
+            keyboard_buttons.append([InlineKeyboardButton(text="🌤️ Show Weather", callback_data=f"weather_{race_id}")])
+
+        keyboard = InlineKeyboardMarkup(inline_keyboard=keyboard_buttons)
         message = (
             f"{emoji} {title}\n\n"
             f"🏁 **Race #{race_id}**\n"
@@ -586,9 +650,13 @@ async def send_quali_notification(bot: Bot, user_id: int, race_id: int, race_dat
             f"Click button to re-enable notifications"
         )
     else:
-        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        keyboard_buttons = [
             [InlineKeyboardButton(text="✅ Quali Done", callback_data=f"done_{race_id}")]
-        ])
+        ]
+        if has_weather:
+            keyboard_buttons.append([InlineKeyboardButton(text="🌤️ Show Weather", callback_data=f"weather_{race_id}")])
+
+        keyboard = InlineKeyboardMarkup(inline_keyboard=keyboard_buttons)
         message = (
             f"{emoji} {title}\n\n"
             f"🏁 **Race #{race_id}**\n"
@@ -736,6 +804,24 @@ async def _check_quali_open_notifications(now: datetime) -> list:
         if race_id in api_result:
             # API confirmed quali is open!
             logger.info(f"🆕 API confirmed: Race {race_id} quali opened!")
+
+            # Fetch weather data with retry (if not already fetched)
+            if 'weather' not in race_calendar[race_id]:
+                weather_data = await fetch_weather_from_api(race_id)
+
+                # Retry once if failed
+                if not weather_data:
+                    logger.warning(f"Weather fetch failed for race {race_id}, retrying in 5s...")
+                    await asyncio.sleep(5)
+                    weather_data = await fetch_weather_from_api(race_id)
+
+                    if not weather_data:
+                        logger.error(f"Weather fetch failed after retry for race {race_id}")
+                    else:
+                        logger.info(f"Weather fetch succeeded on retry for race {race_id}")
+            else:
+                logger.debug(f"Weather data already cached for race {race_id}")
+
             history_key = (race_id, "opens_soon")
             notifications.append(('opens', race_id, race_data, "opens_soon", history_key))
 
@@ -748,6 +834,24 @@ async def _check_quali_open_notifications(now: datetime) -> list:
     # Fallback: Send notification if we've reached 3.5h without API detection
     for race_id, race_data, prev_race_id, hours_since in races_for_fallback:
         logger.info(f"⏰ Fallback: Sending quali open for race {race_id} at {hours_since:.1f}h (API didn't detect)")
+
+        # Fetch weather data with retry (if not already fetched)
+        if 'weather' not in race_calendar[race_id]:
+            weather_data = await fetch_weather_from_api(race_id)
+
+            # Retry once if failed
+            if not weather_data:
+                logger.warning(f"Weather fetch failed for race {race_id}, retrying in 5s...")
+                await asyncio.sleep(5)
+                weather_data = await fetch_weather_from_api(race_id)
+
+                if not weather_data:
+                    logger.error(f"Weather fetch failed after retry for race {race_id}")
+                else:
+                    logger.info(f"Weather fetch succeeded on retry for race {race_id}")
+        else:
+            logger.debug(f"Weather data already cached for race {race_id}")
+
         history_key = (race_id, "opens_soon")
         notifications.append(('opens', race_id, race_data, "opens_soon", history_key))
 

@@ -7,8 +7,8 @@ from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from datetime import datetime
-from gpro_calendar import race_calendar, next_season_calendar, get_races_closing_soon, update_calendar, load_next_season_silent
-from notifications import get_user_status, mark_quali_done, reset_user_status, set_user_group, toggle_notification, is_notification_enabled, users_data, save_users_data, send_quali_notification, LANGUAGE_OPTIONS, set_user_language, get_user_language, get_custom_notifications, set_custom_notification, parse_time_input, format_custom_notification_time, CUSTOM_NOTIF_MIN_HOURS, CUSTOM_NOTIF_MAX_HOURS
+from gpro_calendar import race_calendar, next_season_calendar, get_races_closing_soon, update_calendar, load_next_season_silent, fetch_weather_from_api
+from notifications import get_user_status, mark_quali_done, reset_user_status, set_user_group, toggle_notification, is_notification_enabled, users_data, save_users_data, send_quali_notification, LANGUAGE_OPTIONS, set_user_language, get_user_language, get_custom_notifications, set_custom_notification, parse_time_input, format_custom_notification_time, CUSTOM_NOTIF_MIN_HOURS, CUSTOM_NOTIF_MAX_HOURS, format_weather_data
 from config import ADMIN_USER_IDS
 
 logger = logging.getLogger(__name__)
@@ -577,6 +577,79 @@ async def cmd_users(message: Message):
         logger.error(f"USERS ERROR: {e}")
         await message.answer("❌ Error loading user data", parse_mode='Markdown')
 
+@router.message(Command("weather"))
+async def cmd_weather(message: Message):
+    """Admin command to manually fetch weather data for next race
+
+    Usage:
+        /weather - Fetch weather if not cached
+        /weather force - Force fetch even if cached
+    """
+    if message.from_user.id not in ADMIN_USER_IDS:
+        await message.answer("❌ Admin only")
+        return
+
+    if not race_calendar:
+        await message.answer("❌ No races in calendar", parse_mode='Markdown')
+        return
+
+    # Check for "force" argument
+    force_update = False
+    if message.text and len(message.text.split()) > 1:
+        args = message.text.split()[1:]
+        if 'force' in args:
+            force_update = True
+
+    # Find next upcoming race
+    now = datetime.utcnow()
+    next_race_id = None
+    next_race_data = None
+
+    for race_id, race_data in sorted(race_calendar.items()):
+        if race_data.get('quali_close', now) > now:
+            next_race_id = race_id
+            next_race_data = race_data
+            break
+
+    if not next_race_id:
+        await message.answer("❌ No upcoming races found", parse_mode='Markdown')
+        return
+
+    track = add_flag_to_track(next_race_data.get('track', f'Race {next_race_id}'))
+
+    # Check if weather already cached (skip if force update)
+    if 'weather' in next_race_data and not force_update:
+        await message.answer(
+            f"ℹ️ Weather already cached for **Race #{next_race_id}: {track}**\n\n"
+            f"Use `/weather force` to force update.\n"
+            f"Use /notify to see the notification with weather button.",
+            parse_mode='Markdown'
+        )
+        return
+
+    # Fetch weather
+    if force_update and 'weather' in next_race_data:
+        await message.answer(f"🔄 Force updating weather for **Race #{next_race_id}: {track}**...", parse_mode='Markdown')
+        # Clear cached weather to force fresh fetch
+        del race_calendar[next_race_id]['weather']
+    else:
+        await message.answer(f"🔄 Fetching weather for **Race #{next_race_id}: {track}**...", parse_mode='Markdown')
+
+    weather_data = await fetch_weather_from_api(next_race_id)
+
+    if weather_data:
+        await message.answer(
+            f"✅ Weather data fetched for **Race #{next_race_id}: {track}**\n\n"
+            f"Use /notify to test the notification with weather button!",
+            parse_mode='Markdown'
+        )
+    else:
+        await message.answer(
+            f"❌ Failed to fetch weather data\n\n"
+            f"Check if GPRO API token is valid and Practice API is available.",
+            parse_mode='Markdown'
+        )
+
 @router.callback_query(F.data.startswith("toggle_"))
 async def handle_toggle_notification(callback: CallbackQuery):
     """Handle notification toggle button clicks"""
@@ -674,6 +747,40 @@ async def handle_reset(callback: CallbackQuery):
         reset_user_status(callback.from_user.id)
         await callback.message.edit_text(callback.message.text + "\n\n🔄 *Notifications re-enabled!*")
         await callback.answer("🔄 Re-enabled!")
+
+@router.callback_query(F.data.startswith("weather_"))
+async def handle_weather(callback: CallbackQuery):
+    """Display weather forecast for a race"""
+    try:
+        race_id = int(callback.data.split("_")[1])
+    except (ValueError, IndexError):
+        await callback.answer("❌ Invalid race ID", show_alert=True)
+        return
+
+    # Get weather data from race_calendar
+    if race_id not in race_calendar:
+        await callback.answer("❌ Race not found", show_alert=True)
+        return
+
+    race_data = race_calendar[race_id]
+    weather_data = race_data.get('weather')
+
+    if not weather_data:
+        await callback.answer("⚠️ Weather data not available yet", show_alert=True)
+        return
+
+    # Format and send weather message
+    weather_message = format_weather_data(weather_data)
+    track = add_flag_to_track(race_data.get('track', f'Race {race_id}'))
+
+    full_message = f"**Race #{race_id}: {track}**\n\n{weather_message}"
+
+    try:
+        await callback.message.answer(full_message, parse_mode='Markdown')
+        await callback.answer("🌤️ Weather forecast sent!")
+    except Exception as e:
+        logger.error(f"Failed to send weather for race {race_id}: {e}")
+        await callback.answer("❌ Failed to send weather", show_alert=True)
 
 @router.callback_query(F.data == "lang_menu")
 async def handle_language_menu(callback: CallbackQuery):

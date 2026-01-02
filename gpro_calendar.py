@@ -344,6 +344,53 @@ async def check_quali_status_from_api() -> dict:
         logger.error(f"Office API error: {e}")
         return {}
 
+async def fetch_weather_from_api(race_id: int) -> dict:
+    """Fetch weather data from GPRO Practice API for a specific race
+
+    Args:
+        race_id: Race ID to fetch weather for
+
+    Returns:
+        dict: Weather data with parsed info, or empty dict on error
+    """
+    if not GPRO_API_TOKEN:
+        logger.warning("Cannot fetch weather: GPRO_API_TOKEN missing")
+        return {}
+
+    url = f"https://gpro.net/{GPRO_API_LANG}/backend/api/v2/Practice"
+    headers = {
+        "Authorization": f"Bearer {GPRO_API_TOKEN}",
+        "User-Agent": "GPRO-QualiBot/1.0"
+    }
+
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url, headers=headers, timeout=10) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+
+                    # Extract just the weather data from the response
+                    weather_data = data.get('weather', {})
+
+                    if weather_data:
+                        logger.info(f"🌤️ Weather API: Successfully fetched data for race {race_id}")
+                        # Store weather data in race_calendar
+                        if race_id in race_calendar:
+                            race_calendar[race_id]['weather'] = weather_data
+                    else:
+                        logger.warning(f"Weather API returned data but no 'weather' key found for race {race_id}")
+
+                    return weather_data
+                else:
+                    logger.warning(f"Weather API returned {resp.status}")
+                    return {}
+    except asyncio.TimeoutError:
+        logger.warning("Weather API timeout")
+        return {}
+    except Exception as e:
+        logger.error(f"Weather API error: {e}")
+        return {}
+
 def get_races_closing_soon(hours_before: float = 720) -> dict:
     """Get races closing within 30 days - SORTED by time!"""
     now = datetime.utcnow()
