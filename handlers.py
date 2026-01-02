@@ -28,6 +28,38 @@ NOTIFICATION_LABELS = {
 class SetGroupStates(StatesGroup):
     waiting_for_group = State()
 
+def format_group_display(group: str) -> str:
+    """Convert group code to human-readable format
+
+    Examples:
+        E -> Elite
+        M3 -> Master - 3
+        P15 -> Pro - 15
+        A42 -> Amateur - 42
+        R11 -> Rookie - 11
+    """
+    if not group:
+        return "Not set"
+
+    group = group.strip().upper()
+    if group == 'E':
+        return "Elite"
+
+    import re
+    match = re.match(r'^([MPAR])(\d{1,3})$', group)
+    if not match:
+        return group  # Return as-is if invalid format
+
+    letter, number = match.groups()
+    group_names = {
+        'M': 'Master',
+        'P': 'Pro',
+        'A': 'Amateur',
+        'R': 'Rookie'
+    }
+
+    return f"{group_names[letter]} - {number}"
+
 
 def format_full_calendar(calendar_data, title="Full Season", is_current_season=True):
     """Generic formatter for current/next season"""
@@ -189,27 +221,11 @@ async def cmd_start(message: Message):
     else:
         logger.debug(f"👤 Existing user {user_id} used /start")
 
-    await message.answer("🏁 GPRO Bot LIVE!\n/status - Next race\n/calendar - Full season\n/next - Next season\n/setgroup - Set your race group\n/settings - Notification preferences")
-
-@router.message(Command("setgroup"))
-async def cmd_setgroup(message: Message, state: FSMContext):
-    """Start group setup process"""
-    await state.set_state(SetGroupStates.waiting_for_group)
-    await message.answer(
-        "🏁 **Set Your GPRO Group**\n\n"
-        "Enter your group in one of these formats:\n"
-        "• **E** (Elite)\n"
-        "• **M12** (Master 12)\n"
-        "• **P3** (Pro 3)\n"
-        "• **A5** (Amateur 5)\n"
-        "• **R11** (Rookie 11)\n\n"
-        "Numbers can be 1-3 digits.",
-        parse_mode='Markdown'
-    )
+    await message.answer("🏁 GPRO Bot LIVE!\n/status - Next race\n/calendar - Full season\n/next - Next season\n/settings - Preferences")
 
 @router.message(SetGroupStates.waiting_for_group)
 async def process_group_input(message: Message, state: FSMContext):
-    """Process user's group input"""
+    """Process user's group input from settings"""
     group_input = message.text.strip().upper()
 
     # Validate format: E or M/P/A/R followed by 1-3 digits
@@ -222,7 +238,8 @@ async def process_group_input(message: Message, state: FSMContext):
             "❌ Invalid format!\n\n"
             "Please use:\n"
             "• **E** for Elite\n"
-            "• **M12**, **P3**, **A5**, **R11** etc.\n\n"
+            "• **M3** (Master 3) - Master has groups 1-5\n"
+            "• **P15**, **A42**, **R11** etc.\n\n"
             "Try again:",
             parse_mode='Markdown'
         )
@@ -230,63 +247,57 @@ async def process_group_input(message: Message, state: FSMContext):
 
     # Save the group
     set_user_group(message.from_user.id, group_input)
+    group_display = format_group_display(group_input)
     await state.clear()
 
+    # Show success with back to settings button
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="◀ Back to Settings", callback_data="settings_main")]
+    ])
+
     await message.answer(
-        f"✅ **Group set to: {group_input}**\n\n"
-        f"Race and replay notifications will include direct links to your group!\n\n"
-        f"Manage notification preferences with /settings",
+        f"✅ **Group set to: {group_display}**\n\n"
+        f"Race and replay notifications will include direct links to your group!",
+        reply_markup=keyboard,
         parse_mode='Markdown'
     )
 
 @router.message(Command("settings"))
 async def cmd_settings(message: Message):
-    """Show notification settings menu"""
+    """Show main settings menu"""
     user_id = message.from_user.id
     user_status = get_user_status(user_id)
-    notifications = user_status.get('notifications', {})
     current_lang = user_status.get('gpro_lang', 'gb')
+    current_group = user_status.get('group')
 
-    # Build inline keyboard with toggle buttons
+    # Build main settings menu
     keyboard_buttons = []
 
-    # Add language settings button at the top
+    # Language button
     lang_display = LANGUAGE_OPTIONS.get(current_lang, current_lang)
     keyboard_buttons.append([InlineKeyboardButton(
         text=f"🌍 Language: {lang_display}",
         callback_data="lang_menu"
     )])
 
-    # Notification toggles
-    for notif_type, label in NOTIFICATION_LABELS.items():
-        enabled = notifications.get(notif_type, True)
-        icon = "✅" if enabled else "❌"
-        button_text = f"{icon} {label}"
-        keyboard_buttons.append([InlineKeyboardButton(
-            text=button_text,
-            callback_data=f"toggle_{notif_type}"
-        )])
+    # Group button
+    group_display = format_group_display(current_group)
+    keyboard_buttons.append([InlineKeyboardButton(
+        text=f"🏁 Group: {group_display}",
+        callback_data="group_menu"
+    )])
 
-    # Add "Enable All" / "Disable All" button
-    all_enabled = all(notifications.get(t, True) for t in NOTIFICATION_LABELS.keys())
-    if all_enabled:
-        keyboard_buttons.append([InlineKeyboardButton(
-            text="🔕 Disable All Notifications",
-            callback_data="toggle_all_off"
-        )])
-    else:
-        keyboard_buttons.append([InlineKeyboardButton(
-            text="🔔 Enable All Notifications",
-            callback_data="toggle_all_on"
-        )])
+    # Notifications button (opens sub-menu)
+    keyboard_buttons.append([InlineKeyboardButton(
+        text="🔔 Notifications",
+        callback_data="notif_menu"
+    )])
 
     keyboard = InlineKeyboardMarkup(inline_keyboard=keyboard_buttons)
 
     await message.answer(
-        "⚙️ **Notification Settings**\n\n"
-        "Click to toggle notifications on/off:\n"
-        "✅ = Enabled | ❌ = Disabled\n\n"
-        "ℹ️ *These are global switches for all races. Use the 'Quali Done' button in notifications to disable a specific race.*",
+        "⚙️ **Settings**\n\n"
+        "Configure your preferences:",
         reply_markup=keyboard,
         parse_mode='Markdown'
     )
@@ -481,7 +492,7 @@ async def handle_toggle_notification(callback: CallbackQuery):
         # Get updated status after toggle
         user_status = get_user_status(user_id)
 
-    # Rebuild the settings menu with updated states (user_status already fetched above)
+    # Rebuild the notification sub-menu with updated states (user_status already fetched above)
     notifications = user_status.get('notifications', {})
 
     keyboard_buttons = []
@@ -506,6 +517,12 @@ async def handle_toggle_notification(callback: CallbackQuery):
             text="🔔 Enable All Notifications",
             callback_data="toggle_all_on"
         )])
+
+    # Back button
+    keyboard_buttons.append([InlineKeyboardButton(
+        text="◀ Back",
+        callback_data="settings_main"
+    )])
 
     keyboard = InlineKeyboardMarkup(inline_keyboard=keyboard_buttons)
 
@@ -642,15 +659,15 @@ async def handle_language_reset(callback: CallbackQuery):
     else:
         await callback.answer("❌ Reset failed", show_alert=True)
 
-@router.callback_query(F.data == "lang_back_main")
-async def handle_language_back(callback: CallbackQuery):
+@router.callback_query(F.data == "settings_main")
+async def handle_settings_main(callback: CallbackQuery):
     """Return to main settings menu"""
     user_id = callback.from_user.id
     user_status = get_user_status(user_id)
-    notifications = user_status.get('notifications', {})
     current_lang = user_status.get('gpro_lang', 'gb')
+    current_group = user_status.get('group')
 
-    # Rebuild main settings keyboard
+    # Build main settings keyboard
     keyboard_buttons = []
 
     # Language button
@@ -660,7 +677,45 @@ async def handle_language_back(callback: CallbackQuery):
         callback_data="lang_menu"
     )])
 
-    # Notification toggles
+    # Group button
+    group_display = format_group_display(current_group)
+    keyboard_buttons.append([InlineKeyboardButton(
+        text=f"🏁 Group: {group_display}",
+        callback_data="group_menu"
+    )])
+
+    # Notifications button
+    keyboard_buttons.append([InlineKeyboardButton(
+        text="🔔 Notifications",
+        callback_data="notif_menu"
+    )])
+
+    keyboard = InlineKeyboardMarkup(inline_keyboard=keyboard_buttons)
+
+    await callback.message.edit_text(
+        "⚙️ **Settings**\n\n"
+        "Configure your preferences:",
+        reply_markup=keyboard,
+        parse_mode='Markdown'
+    )
+    await callback.answer()
+
+# Alias for backwards compatibility
+@router.callback_query(F.data == "lang_back_main")
+async def handle_language_back(callback: CallbackQuery):
+    """Alias for returning to main settings"""
+    await handle_settings_main(callback)
+
+@router.callback_query(F.data == "notif_menu")
+async def handle_notifications_menu(callback: CallbackQuery):
+    """Show notifications sub-menu"""
+    user_id = callback.from_user.id
+    user_status = get_user_status(user_id)
+    notifications = user_status.get('notifications', {})
+
+    # Build notification toggles keyboard
+    keyboard_buttons = []
+
     for notif_type, label in NOTIFICATION_LABELS.items():
         enabled = notifications.get(notif_type, True)
         icon = "✅" if enabled else "❌"
@@ -683,10 +738,16 @@ async def handle_language_back(callback: CallbackQuery):
             callback_data="toggle_all_on"
         )])
 
+    # Back button
+    keyboard_buttons.append([InlineKeyboardButton(
+        text="◀ Back",
+        callback_data="settings_main"
+    )])
+
     keyboard = InlineKeyboardMarkup(inline_keyboard=keyboard_buttons)
 
     await callback.message.edit_text(
-        "⚙️ **Notification Settings**\n\n"
+        "🔔 **Notification Settings**\n\n"
         "Click to toggle notifications on/off:\n"
         "✅ = Enabled | ❌ = Disabled\n\n"
         "ℹ️ *These are global switches for all races. Use the 'Quali Done' button in notifications to disable a specific race.*",
@@ -695,4 +756,28 @@ async def handle_language_back(callback: CallbackQuery):
     )
     await callback.answer()
 
-logger.info("✅ handlers.py loaded - Aiogram 3.x Router ready (/setgroup + race live notifications added)")
+@router.callback_query(F.data == "group_menu")
+async def handle_group_menu(callback: CallbackQuery, state: FSMContext):
+    """Show group settings menu"""
+    user_id = callback.from_user.id
+    user_status = get_user_status(user_id)
+    current_group = user_status.get('group')
+    group_display = format_group_display(current_group)
+
+    # Prompt for group input
+    await state.set_state(SetGroupStates.waiting_for_group)
+    await callback.message.edit_text(
+        f"🏁 **Group Settings**\n\n"
+        f"Current group: **{group_display}**\n\n"
+        f"Enter your group in one of these formats:\n"
+        f"• **E** (Elite)\n"
+        f"• **M3** (Master 3) - Master has groups 1-5\n"
+        f"• **P15** (Pro 15)\n"
+        f"• **A42** (Amateur 42)\n"
+        f"• **R11** (Rookie 11)\n\n"
+        f"Numbers can be 1-3 digits.",
+        parse_mode='Markdown'
+    )
+    await callback.answer()
+
+logger.info("✅ handlers.py loaded - Aiogram 3.x Router ready (group settings + notifications)")

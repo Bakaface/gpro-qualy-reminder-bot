@@ -208,11 +208,11 @@ def generate_gpro_link(group: str, lang: str = 'gb', link_type: str = 'live') ->
     """Generate GPRO race link based on group format and type
 
     Args:
-        group: User's GPRO group (E, M12, R11, etc.)
+        group: User's GPRO group (E, M3, R11, etc.)
         lang: Language code for URL (e.g., 'gb', 'de', 'fr')
         link_type: 'live' for live race, 'replay' for replay
 
-    Examples: E → Elite, M12 → Master - 12, R11 → Rookie - 11"""
+    Examples: E → Elite, M3 → Master - 3, A42 → Amateur - 42, R11 → Rookie - 11"""
 
     # Validate and fallback for language
     if not is_valid_language(lang):
@@ -232,7 +232,7 @@ def generate_gpro_link(group: str, lang: str = 'gb', link_type: str = 'live') ->
     if group == 'E':
         return f"{base_url}Elite"
 
-    # Parse group letter and number (e.g., M12, R11, P3, A5)
+    # Parse group letter and number (e.g., M3, R11, P15, A42)
     match = re.match(r'^([MPAR])(\d{1,3})$', group)
     if not match:
         # Invalid format, return default
@@ -284,7 +284,7 @@ async def send_race_live_notification(bot: Bot, user_id: int, race_id: int, race
             f"🏁 **Race #{race_id} is LIVE!**\n\n"
             f"📍 **{track}**\n"
             f"🕐 **{race_time}**\n\n"
-            f"⚠️ Set your group with /setgroup for a direct link!\n\n"
+            f"⚠️ Set your group in /settings for a direct link!\n\n"
             f"🔗 [Watch Live Race]({race_link})"
         )
 
@@ -321,7 +321,7 @@ async def send_race_replay_notification(bot: Bot, user_id: int, race_id: int, ra
             f"📍 **{track}**\n"
             f"🕐 **{race_time}**\n\n"
             f"If the race has already been calculated, replay is available here:\n\n"
-            f"⚠️ For personalized links, use /setgroup to set your group!\n\n"
+            f"⚠️ For personalized links, set your group in /settings!\n\n"
             f"🔗 [Watch Replay]({replay_link})"
         )
 
