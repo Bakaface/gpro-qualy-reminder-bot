@@ -32,6 +32,9 @@ class CustomNotificationStates(StatesGroup):
     waiting_for_time = State()
     slot_index = State()
 
+class OnboardingStates(StatesGroup):
+    waiting_for_group = State()
+
 import pycountry
 
 def country_code_to_flag(country_code: str) -> str:
@@ -247,12 +250,13 @@ def format_time_until_quali(quali_close):
         hours = math.floor(total_hours)
         return f"{hours}h"  # "23h"
 
-def build_language_keyboard(page: int = 1, current_lang: str = 'gb') -> InlineKeyboardMarkup:
+def build_language_keyboard(page: int = 1, current_lang: str = 'gb', onboarding: bool = False) -> InlineKeyboardMarkup:
     """Build paginated language selection keyboard
 
     Args:
         page: Page number (1-4)
         current_lang: User's current language code
+        onboarding: If True, use onboarding callbacks and add Skip button
 
     Returns:
         InlineKeyboardMarkup with language options and navigation
@@ -266,6 +270,7 @@ def build_language_keyboard(page: int = 1, current_lang: str = 'gb') -> InlineKe
     ]
 
     buttons = []
+    callback_prefix = "onboard_lang_" if onboarding else "lang_"
 
     # Language selection buttons
     for lang_code in pages[page - 1]:
@@ -274,11 +279,11 @@ def build_language_keyboard(page: int = 1, current_lang: str = 'gb') -> InlineKe
         button_text = f"{prefix}{LANGUAGE_OPTIONS[lang_code]}"
         buttons.append([InlineKeyboardButton(
             text=button_text,
-            callback_data=f"lang_{lang_code}"
+            callback_data=f"{callback_prefix}{lang_code}"
         )])
 
-    # Add reset button on last page
-    if page == len(pages):
+    # Add reset button on last page (only in settings, not onboarding)
+    if page == len(pages) and not onboarding:
         buttons.append([InlineKeyboardButton(
             text="🔄 Reset to Default (English)",
             callback_data="lang_reset_default"
@@ -287,10 +292,21 @@ def build_language_keyboard(page: int = 1, current_lang: str = 'gb') -> InlineKe
     # Navigation footer
     footer = []
     if page > 1:
-        footer.append(InlineKeyboardButton(text="◀ Previous", callback_data=f"lang_page_{page-1}"))
-    footer.append(InlineKeyboardButton(text="🏠 Main Menu", callback_data="lang_back_main"))
+        if onboarding:
+            footer.append(InlineKeyboardButton(text="◀ Previous", callback_data=f"onboard_lang_page_{page-1}"))
+        else:
+            footer.append(InlineKeyboardButton(text="◀ Previous", callback_data=f"lang_page_{page-1}"))
+
+    if onboarding:
+        footer.append(InlineKeyboardButton(text="⏭️ Skip", callback_data="onboard_skip_lang"))
+    else:
+        footer.append(InlineKeyboardButton(text="🏠 Main Menu", callback_data="lang_back_main"))
+
     if page < len(pages):
-        footer.append(InlineKeyboardButton(text="Next ▶", callback_data=f"lang_page_{page+1}"))
+        if onboarding:
+            footer.append(InlineKeyboardButton(text="Next ▶", callback_data=f"onboard_lang_page_{page+1}"))
+        else:
+            footer.append(InlineKeyboardButton(text="Next ▶", callback_data=f"lang_page_{page+1}"))
 
     buttons.append(footer)
 
@@ -306,10 +322,19 @@ async def cmd_start(message: Message):
 
     if was_new:
         logger.info(f"🆕 NEW user {user_id} registered via /start")
+        # Show interactive onboarding for new users
+        keyboard = build_language_keyboard(page=1, current_lang='gb', onboarding=True)
+        await message.answer(
+            "👋 **Welcome to GPRO Bot!**\n\n"
+            "Let's get you set up. First, choose your preferred language for GPRO race links:\n\n"
+            "🌍 **Select your language** (or skip to use English):",
+            reply_markup=keyboard,
+            parse_mode='Markdown'
+        )
     else:
         logger.debug(f"👤 Existing user {user_id} used /start")
-
-    await message.answer("🏁 GPRO Bot LIVE!\n/status - Next race\n/calendar - Full season\n/next - Next season\n/settings - Preferences")
+        # Show normal command list for existing users
+        await message.answer("🏁 GPRO Bot LIVE!\n/status - Next race\n/calendar - Full season\n/next - Next season\n/settings - Preferences")
 
 @router.message(SetGroupStates.waiting_for_group)
 async def process_group_input(message: Message, state: FSMContext):
@@ -1111,5 +1136,193 @@ async def handle_group_menu(callback: CallbackQuery, state: FSMContext):
         parse_mode='Markdown'
     )
     await callback.answer()
+
+# ============= ONBOARDING HANDLERS =============
+
+@router.callback_query(F.data.startswith("onboard_lang_page_"))
+async def handle_onboarding_language_page(callback: CallbackQuery):
+    """Handle language pagination during onboarding"""
+    try:
+        page = int(callback.data.split("_")[-1])
+    except (ValueError, IndexError):
+        await callback.answer("❌ Invalid page", show_alert=True)
+        return
+
+    keyboard = build_language_keyboard(page=page, current_lang='gb', onboarding=True)
+    await callback.message.edit_reply_markup(reply_markup=keyboard)
+    await callback.answer()
+
+@router.callback_query(F.data.startswith("onboard_lang_") & ~F.data.in_(["onboard_lang_page_1", "onboard_lang_page_2", "onboard_lang_page_3", "onboard_lang_page_4"]))
+async def handle_onboarding_language_select(callback: CallbackQuery):
+    """Handle language selection during onboarding"""
+    user_id = callback.from_user.id
+
+    # Extract language code
+    lang_code = callback.data.replace("onboard_lang_", "")
+
+    # Set user language
+    if set_user_language(user_id, lang_code):
+        lang_display = LANGUAGE_OPTIONS.get(lang_code, lang_code)
+        await callback.answer(f"✅ Language set to {lang_display}")
+    else:
+        await callback.answer("❌ Invalid language", show_alert=True)
+        return
+
+    # Proceed to group selection
+    await show_onboarding_group_menu(callback.message, user_id)
+
+@router.callback_query(F.data == "onboard_skip_lang")
+async def handle_onboarding_skip_language(callback: CallbackQuery):
+    """Skip language selection during onboarding"""
+    user_id = callback.from_user.id
+    await callback.answer("⏭️ Using default language (English)")
+
+    # Proceed to group selection
+    await show_onboarding_group_menu(callback.message, user_id)
+
+async def show_onboarding_group_menu(message: Message, user_id: int):
+    """Show group selection menu during onboarding"""
+    keyboard_buttons = [
+        [
+            InlineKeyboardButton(text="Elite", callback_data="onboard_group_E"),
+            InlineKeyboardButton(text="Master 3", callback_data="onboard_group_M3")
+        ],
+        [
+            InlineKeyboardButton(text="Pro 15", callback_data="onboard_group_P15"),
+            InlineKeyboardButton(text="Amateur 42", callback_data="onboard_group_A42")
+        ],
+        [
+            InlineKeyboardButton(text="Rookie 11", callback_data="onboard_group_R11")
+        ],
+        [
+            InlineKeyboardButton(text="✏️ Enter Custom Group", callback_data="onboard_group_custom")
+        ],
+        [
+            InlineKeyboardButton(text="⏭️ Skip", callback_data="onboard_skip_group")
+        ]
+    ]
+
+    keyboard = InlineKeyboardMarkup(inline_keyboard=keyboard_buttons)
+
+    await message.edit_text(
+        "🏁 **Group Selection**\n\n"
+        "Choose your GPRO group to get personalized race links:\n\n"
+        "Select a common group or enter your own:",
+        reply_markup=keyboard,
+        parse_mode='Markdown'
+    )
+
+@router.callback_query(F.data.startswith("onboard_group_") & (F.data != "onboard_group_custom"))
+async def handle_onboarding_group_select(callback: CallbackQuery):
+    """Handle preset group selection during onboarding"""
+    user_id = callback.from_user.id
+
+    # Extract group code
+    group_code = callback.data.replace("onboard_group_", "")
+
+    # Set user group
+    set_user_group(user_id, group_code)
+    group_display = format_group_display(group_code)
+    await callback.answer(f"✅ Group set to {group_display}")
+
+    # Show welcome complete message
+    await show_onboarding_complete(callback.message)
+
+@router.callback_query(F.data == "onboard_group_custom")
+async def handle_onboarding_group_custom(callback: CallbackQuery, state: FSMContext):
+    """Prompt for custom group input during onboarding"""
+    await state.set_state(OnboardingStates.waiting_for_group)
+
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="⏭️ Skip", callback_data="onboard_skip_group")]
+    ])
+
+    await callback.message.edit_text(
+        "🏁 **Custom Group**\n\n"
+        "Enter your group in one of these formats:\n"
+        "• **E** (Elite)\n"
+        "• **M3** (Master 3) - Master has groups 1-5\n"
+        "• **P15** (Pro 15)\n"
+        "• **A42** (Amateur 42)\n"
+        "• **R11** (Rookie 11)\n\n"
+        "Numbers can be 1-3 digits.",
+        reply_markup=keyboard,
+        parse_mode='Markdown'
+    )
+    await callback.answer()
+
+@router.message(OnboardingStates.waiting_for_group)
+async def process_onboarding_group_input(message: Message, state: FSMContext):
+    """Process custom group input during onboarding"""
+    user_id = message.from_user.id
+    group_input = message.text.strip().upper()
+
+    # Validate format
+    if group_input == 'E':
+        valid = True
+    elif re.match(r'^[MPAR]\d{1,3}$', group_input):
+        valid = True
+    else:
+        await message.answer(
+            "❌ Invalid format!\n\n"
+            "Please use:\n"
+            "• **E** for Elite\n"
+            "• **M3** (Master 3)\n"
+            "• **P15**, **A42**, **R11** etc.\n\n"
+            "Try again or use /start to restart:",
+            parse_mode='Markdown'
+        )
+        return
+
+    # Save the group
+    set_user_group(user_id, group_input)
+    group_display = format_group_display(group_input)
+    await state.clear()
+
+    # Show welcome complete message
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="✅ Got it!", callback_data="onboard_complete")]
+    ])
+
+    await message.answer(
+        f"✅ **Setup Complete!**\n\n"
+        f"Group: **{group_display}**\n\n"
+        f"🏁 **GPRO Bot is ready!**\n\n"
+        f"**Available commands:**\n"
+        f"/status - Next race\n"
+        f"/calendar - Full season\n"
+        f"/next - Next season\n"
+        f"/settings - Preferences",
+        reply_markup=keyboard,
+        parse_mode='Markdown'
+    )
+
+@router.callback_query(F.data == "onboard_skip_group")
+async def handle_onboarding_skip_group(callback: CallbackQuery, state: FSMContext):
+    """Skip group selection during onboarding"""
+    await state.clear()
+    await callback.answer("⏭️ Skipped group selection")
+
+    # Show welcome complete message
+    await show_onboarding_complete(callback.message)
+
+async def show_onboarding_complete(message: Message):
+    """Show onboarding complete message"""
+    await message.edit_text(
+        "✅ **Setup Complete!**\n\n"
+        "🏁 **GPRO Bot is ready!**\n\n"
+        "**Available commands:**\n"
+        "/status - Next race\n"
+        "/calendar - Full season\n"
+        "/next - Next season\n"
+        "/settings - Preferences\n\n"
+        "💡 *You can change these settings anytime using /settings*",
+        parse_mode='Markdown'
+    )
+
+@router.callback_query(F.data == "onboard_complete")
+async def handle_onboarding_complete(callback: CallbackQuery):
+    """Acknowledge onboarding complete"""
+    await callback.answer("✅ Welcome aboard!")
 
 logger.info("✅ handlers.py loaded - Aiogram 3.x Router ready (group settings + notifications)")
