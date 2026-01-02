@@ -1,6 +1,8 @@
 import asyncio
 import logging
 import sys
+import os
+from logging.handlers import RotatingFileHandler
 sys.path.insert(0, '.')
 
 from aiogram import Bot, Dispatcher
@@ -9,7 +11,20 @@ from config import BOT_TOKEN
 from gpro_calendar import load_calendar_silent
 from notifications import check_notifications, load_users_data  # ADD load_users_data
 
-logging.basicConfig(level=logging.INFO)
+# Configure production-ready logging
+_SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+_LOG_FILE = os.path.join(_SCRIPT_DIR, 'gpro_bot.log')
+
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        # Console handler
+        logging.StreamHandler(),
+        # File handler with rotation (10MB max, keep 5 backups)
+        RotatingFileHandler(_LOG_FILE, maxBytes=10*1024*1024, backupCount=5)
+    ]
+)
 logger = logging.getLogger(__name__)
 
 async def main():

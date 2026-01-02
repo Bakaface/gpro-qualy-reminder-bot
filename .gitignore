@@ -8,6 +8,8 @@ GPRO_API_TOKEN
 # Data/Caches
 *.json
 *.log
+*.log.*
+gpro_bot.log*
 
 # Python
 __pycache__/
@@ -18,6 +20,8 @@ __pycache__/
 venv/
 env/
 .venv/
+.pytest_cache/
+*.pyc
 
 # IDE
 .vscode/

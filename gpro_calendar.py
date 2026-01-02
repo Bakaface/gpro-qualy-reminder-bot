@@ -233,14 +233,15 @@ def parse_gpro_date_fixed(date_str: str) -> datetime:
             if dt.date() < now.date():
                 dt = dt.replace(year=now.year + 1)
             return dt
-        except:
+        except (ValueError, AttributeError) as e:
+            logger.debug(f"Failed to parse date format '{day_str}': {e}")
             pass
     
     logger.warning(f"Cannot parse date: '{date_str}'")
     return None
 
 def save_calendar(calendar: dict):
-    """Save calendar"""
+    """Save calendar with atomic write to prevent corruption"""
     serializable = {}
     for k, v in calendar.items():
         serializable[str(k)] = {
@@ -249,12 +250,27 @@ def save_calendar(calendar: dict):
             'date': v['date'].isoformat(),
             'group': v['group']
         }
-    with open(CALENDAR_FILE, 'w') as f:
-        json.dump(serializable, f, indent=2)
-    logger.info(f"💾 Saved current season to {CALENDAR_FILE}")
+
+    temp_file = CALENDAR_FILE + '.tmp'
+    try:
+        with open(temp_file, 'w') as f:
+            json.dump(serializable, f, indent=2)
+            f.flush()
+            os.fsync(f.fileno())
+
+        os.replace(temp_file, CALENDAR_FILE)
+        logger.info(f"💾 Saved current season to {CALENDAR_FILE}")
+    except Exception as e:
+        logger.error(f"Failed to save calendar: {e}")
+        if os.path.exists(temp_file):
+            try:
+                os.remove(temp_file)
+            except:
+                pass
+        raise
 
 def save_next_season_calendar(calendar: dict):
-    """Save NEXT season calendar"""
+    """Save NEXT season calendar with atomic write to prevent corruption"""
     serializable = {}
     for k, v in calendar.items():
         serializable[str(k)] = {
@@ -263,9 +279,24 @@ def save_next_season_calendar(calendar: dict):
             'date': v['date'].isoformat(),
             'group': v['group']
         }
-    with open(NEXT_SEASON_FILE, 'w') as f:
-        json.dump(serializable, f, indent=2)
-    logger.info(f"💾 Saved next season to {NEXT_SEASON_FILE}")
+
+    temp_file = NEXT_SEASON_FILE + '.tmp'
+    try:
+        with open(temp_file, 'w') as f:
+            json.dump(serializable, f, indent=2)
+            f.flush()
+            os.fsync(f.fileno())
+
+        os.replace(temp_file, NEXT_SEASON_FILE)
+        logger.info(f"💾 Saved next season to {NEXT_SEASON_FILE}")
+    except Exception as e:
+        logger.error(f"Failed to save next season calendar: {e}")
+        if os.path.exists(temp_file):
+            try:
+                os.remove(temp_file)
+            except:
+                pass
+        raise
 
 def get_races_closing_soon(hours_before: float = 720) -> dict:
     """Get races closing within 30 days - SORTED by time!"""

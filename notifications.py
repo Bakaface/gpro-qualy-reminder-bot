@@ -11,7 +11,10 @@ from datetime import datetime, timedelta
 logger = logging.getLogger(__name__)
 
 users_data: Dict[int, Dict] = {}
-USERS_FILE = 'users_data.json'
+
+# Use absolute path based on script location for robustness
+_SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+USERS_FILE = os.path.join(_SCRIPT_DIR, 'users_data.json')
 
 def load_users_data():
     global users_data
@@ -27,14 +30,28 @@ def load_users_data():
             logger.error(f"Load failed: {e}")
 
 def save_users_data():
+    """Save user data with atomic write to prevent corruption"""
     try:
-        with open(USERS_FILE, 'w') as f:
+        # Write to temporary file first
+        temp_file = USERS_FILE + '.tmp'
+        with open(temp_file, 'w') as f:
             # TYPE FIX: Convert int keys → string for JSON
             save_data = {str(k): v for k, v in users_data.items()}
             json.dump(save_data, f, indent=2)
+            f.flush()
+            os.fsync(f.fileno())  # Ensure data is written to disk
+
+        # Atomic rename (overwrites USERS_FILE)
+        os.replace(temp_file, USERS_FILE)
         logger.debug(f"Saved {len(users_data)} users")
     except Exception as e:
         logger.error(f"Save failed: {e}")
+        # Clean up temp file if it exists
+        if os.path.exists(temp_file):
+            try:
+                os.remove(temp_file)
+            except:
+                pass
 
 def get_default_notification_preferences():
     """Default notification settings - all enabled by default"""
@@ -67,15 +84,22 @@ def get_user_status(user_id: int) -> Dict:
         logger.info(f"🆕 TRULY NEW user {user_id} added")
     else:
         # Ensure existing users have required fields (migration)
+        # Batch migrations to avoid multiple saves
+        needs_save = False
         if 'group' not in users_data[user_id]:
             users_data[user_id]['group'] = None
-            save_users_data()
             logger.info(f"🔄 Added 'group' field to existing user {user_id}")
+            needs_save = True
         if 'notifications' not in users_data[user_id]:
             users_data[user_id]['notifications'] = get_default_notification_preferences()
-            save_users_data()
             logger.info(f"🔄 Added 'notifications' field to existing user {user_id}")
-        logger.info(f"✅ User {user_id} EXISTS - no add")
+            needs_save = True
+
+        # Save only once if any migrations were applied
+        if needs_save:
+            save_users_data()
+        else:
+            logger.info(f"✅ User {user_id} EXISTS - no add")
 
     return users_data[user_id]
 
@@ -315,6 +339,9 @@ async def check_notifications(bot: Bot):
 
     while True:
         try:
+            # Determine what notifications to send (quick check under lock)
+            notifications_to_send = []
+
             async with notification_lock:
                 now = datetime.utcnow()
 
@@ -343,15 +370,7 @@ async def check_notifications(bot: Bot):
 
                             # Only send if not sent before
                             if history_key not in notify_history:
-                                logger.info(f"🔔 Sending {label} notification for race {race_id}")
-                                sent_count = 0
-                                for user_id in list(users_data.keys()):
-                                    if is_notification_enabled(user_id, label):
-                                        await send_quali_notification(bot, user_id, race_id, race_data, label)
-                                        sent_count += 1
-
-                                notify_history[history_key] = now
-                                logger.info(f"✅ Sent {label} for race {race_id} to {sent_count}/{len(users_data)} users")
+                                notifications_to_send.append(('quali', race_id, race_data, label, history_key))
 
                 # 2. Check "quali is open" notifications (2.5h after PREVIOUS race time)
                 for race_id, race_data in race_calendar.items():
@@ -371,31 +390,14 @@ async def check_notifications(bot: Bot):
                     # Send if we're within 15min after quali opens (±15min window for reliability)
                     if 0 <= time_since_opens <= 15:
                         history_key = (race_id, "opens_soon")
-
                         if history_key not in notify_history:
-                            logger.info(f"🆕 Sending 'quali open' notification for race {race_id} (prev race {prev_race_id} at {prev_race_time})")
-                            sent_count = 0
-                            for user_id in list(users_data.keys()):
-                                if is_notification_enabled(user_id, "opens_soon"):
-                                    await send_quali_notification(bot, user_id, race_id, race_data, "opens_soon")
-                                    sent_count += 1
-
-                            notify_history[history_key] = now
-                            logger.info(f"✅ Sent 'opens_soon' for race {race_id} to {sent_count}/{len(users_data)} users")
+                            notifications_to_send.append(('opens', race_id, race_data, "opens_soon", history_key))
 
                         # Also send race replay notification for the previous race
                         replay_history_key = (prev_race_id, "race_replay")
                         if replay_history_key not in notify_history:
                             prev_race_data = race_calendar[prev_race_id]
-                            logger.info(f"📺 Sending 'race replay' notification for race {prev_race_id}")
-                            sent_count = 0
-                            for user_id in list(users_data.keys()):
-                                if is_notification_enabled(user_id, "race_replay"):
-                                    await send_race_replay_notification(bot, user_id, prev_race_id, prev_race_data)
-                                    sent_count += 1
-
-                            notify_history[replay_history_key] = now
-                            logger.info(f"✅ Sent 'race_replay' for race {prev_race_id} to {sent_count}/{len(users_data)} users")
+                            notifications_to_send.append(('replay', prev_race_id, prev_race_data, "race_replay", replay_history_key))
 
                 # 3. Check "race is live" notifications (when race starts at 19:00 UTC)
                 for race_id, race_data in race_calendar.items():
@@ -405,21 +407,38 @@ async def check_notifications(bot: Bot):
                     # Send if we're within 10min after race starts (0-10min window)
                     if 0 <= time_since_race <= 10:
                         history_key = (race_id, "race_live")
-
                         if history_key not in notify_history:
-                            logger.info(f"🏁 Sending 'race live' notification for race {race_id} at {race_time}")
-                            sent_count = 0
-                            for user_id in list(users_data.keys()):
-                                if is_notification_enabled(user_id, "race_live"):
-                                    await send_race_live_notification(bot, user_id, race_id, race_data)
-                                    sent_count += 1
-
-                            notify_history[history_key] = now
-                            logger.info(f"✅ Sent 'race_live' for race {race_id} to {sent_count}/{len(users_data)} users")
+                            notifications_to_send.append(('live', race_id, race_data, "race_live", history_key))
 
                 # Clean old history entries (keep last 30 days)
                 cutoff = now - timedelta(days=30)
                 notify_history = {k: v for k, v in notify_history.items() if v > cutoff}
+
+            # Send notifications outside the lock (slow operation)
+            for notif_type, race_id, race_data, label, history_key in notifications_to_send:
+                logger.info(f"🔔 Sending {label} notification for race {race_id}")
+                sent_count = 0
+
+                # Get user list outside loop to avoid modification during iteration
+                user_list = list(users_data.keys())
+                for user_id in user_list:
+                    if is_notification_enabled(user_id, label):
+                        try:
+                            if notif_type == 'quali' or notif_type == 'opens':
+                                await send_quali_notification(bot, user_id, race_id, race_data, label)
+                            elif notif_type == 'replay':
+                                await send_race_replay_notification(bot, user_id, race_id, race_data)
+                            elif notif_type == 'live':
+                                await send_race_live_notification(bot, user_id, race_id, race_data)
+                            sent_count += 1
+                        except Exception as e:
+                            logger.error(f"Failed to send {label} to user {user_id}: {e}")
+
+                # Update history after sending (re-acquire lock briefly)
+                async with notification_lock:
+                    notify_history[history_key] = datetime.utcnow()
+
+                logger.info(f"✅ Sent {label} for race {race_id} to {sent_count}/{len(user_list)} users")
 
         except Exception as e:
             logger.error(f"❌ Notification check error: {e}")

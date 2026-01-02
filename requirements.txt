@@ -16,3 +16,8 @@ python-dotenv==1.2.1
 typing-inspection==0.4.2
 typing_extensions==4.15.0
 yarl==1.22.0
+
+# Testing dependencies
+pytest==8.3.4
+pytest-asyncio==0.24.0
+pytest-mock==3.14.0

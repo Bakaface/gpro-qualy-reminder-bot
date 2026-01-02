@@ -475,7 +475,12 @@ async def handle_toggle_notification(callback: CallbackQuery):
 
 @router.callback_query(F.data.startswith("done_"))
 async def handle_quali_done(callback: CallbackQuery):
-    race_id = int(callback.data.split("_")[1])
+    try:
+        race_id = int(callback.data.split("_")[1])
+    except (ValueError, IndexError):
+        await callback.answer("❌ Invalid race ID", show_alert=True)
+        return
+
     mark_quali_done(callback.from_user.id, race_id)
     await callback.message.edit_text(callback.message.text + "\n\n✅ *Race marked done!*")
     await callback.answer("✅ Done!")
@@ -488,7 +493,12 @@ async def handle_reset(callback: CallbackQuery):
         await callback.answer("🔄 Reset!")
     else:
         # reset_{race_id} format
-        race_id = int(callback.data.split("_")[1])
+        try:
+            race_id = int(callback.data.split("_")[1])
+        except (ValueError, IndexError):
+            await callback.answer("❌ Invalid race ID", show_alert=True)
+            return
+
         reset_user_status(callback.from_user.id)
         await callback.message.edit_text(callback.message.text + "\n\n🔄 *Notifications re-enabled!*")
         await callback.answer("🔄 Re-enabled!")
