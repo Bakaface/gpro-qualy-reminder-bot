@@ -1,0 +1,194 @@
+"""Validation and parsing functions for custom notifications"""
+import logging
+import re
+
+logger = logging.getLogger(__name__)
+
+# Custom notification constraints
+CUSTOM_NOTIF_MIN_HOURS = 20 / 60  # 20 minutes minimum
+CUSTOM_NOTIF_MAX_HOURS = 70  # 70 hours maximum
+CUSTOM_NOTIF_MAX_SLOTS = 2  # Maximum 2 custom notifications per user
+
+
+def validate_custom_notification_hours(hours: float, i18n=None) -> tuple[bool, str]:
+    """Validate custom notification time
+
+    Args:
+        hours: Hours before quali closes
+        i18n: I18n context for translations (optional)
+
+    Returns:
+        (is_valid, error_message)
+    """
+    # Import i18n context if not provided
+    if i18n is None:
+        from aiogram_i18n import I18nContext
+        try:
+            i18n = I18nContext.get_current(no_error=True)
+        except:
+            i18n = None
+
+    # Use i18n if available, fallback to English
+    def get_text(key, **kwargs):
+        if i18n:
+            return i18n.get(key, **kwargs)
+        return key
+
+    if hours is None:
+        return False, get_text("validation-time-empty")
+
+    if hours < CUSTOM_NOTIF_MIN_HOURS:
+        return False, get_text("validation-time-min")
+
+    if hours > CUSTOM_NOTIF_MAX_HOURS:
+        return False, get_text("validation-time-max")
+
+    return True, ""
+
+
+def parse_time_input(time_str: str, i18n=None) -> tuple[float, str]:
+    """Parse user time input into hours
+
+    Supported formats:
+    - "20m", "30min", "45 minutes" -> minutes
+    - "2h", "12 hours" -> hours
+    - "1h 30m", "2h30m" -> hours + minutes
+
+    Args:
+        time_str: User input time string
+        i18n: I18n context for translations (optional)
+
+    Returns:
+        (hours_float, error_message)
+    """
+    # Import i18n context if not provided
+    if i18n is None:
+        from aiogram_i18n import I18nContext
+        try:
+            i18n = I18nContext.get_current(no_error=True)
+        except:
+            i18n = None
+
+    # Use i18n if available, fallback to English
+    def get_text(key, **kwargs):
+        if i18n:
+            return i18n.get(key, **kwargs)
+        return key
+
+    if not time_str:
+        return None, get_text("validation-enter-time")
+
+    time_str = time_str.strip().lower()
+
+    # Try to match "Xh Ym" or "XhYm" format
+    match = re.match(r'^(\d+)\s*h(?:ours?)?\s*(\d+)\s*m(?:in(?:utes?)?)?$', time_str)
+    if match:
+        hours = int(match.group(1))
+        minutes = int(match.group(2))
+        total_hours = hours + minutes / 60
+        return total_hours, ""
+
+    # Try to match hours only: "Xh" or "X hours"
+    match = re.match(r'^(\d+)\s*h(?:ours?)?$', time_str)
+    if match:
+        hours = int(match.group(1))
+        return float(hours), ""
+
+    # Try to match minutes only: "Xm" or "X minutes"
+    match = re.match(r'^(\d+)\s*m(?:in(?:utes?)?)?$', time_str)
+    if match:
+        minutes = int(match.group(1))
+        return minutes / 60, ""
+
+    return None, get_text("validation-invalid-format")
+
+
+def format_custom_notification_time(hours: float) -> str:
+    """Format hours into human-readable string
+
+    Examples:
+        0.333 -> "20m"
+        1.5 -> "1h 30m"
+        12 -> "12h"
+    """
+    if hours is None:
+        return "Not set"
+
+    total_minutes = hours * 60
+    h = int(hours)
+    m = int(total_minutes % 60)
+
+    if h > 0 and m > 0:
+        return f"{h}h {m}m"
+    elif h > 0:
+        return f"{h}h"
+    else:
+        return f"{m}m"
+
+
+def get_custom_notifications(user_id: int) -> list:
+    """Get user's custom notifications
+
+    Returns:
+        List of custom notification dicts
+    """
+    from .user_data import get_user_status, get_default_custom_notifications
+    user_status = get_user_status(user_id)
+    return user_status.get('custom_notifications', get_default_custom_notifications())
+
+
+def set_custom_notification(user_id: int, slot: int, hours_before: float, i18n=None) -> tuple[bool, str]:
+    """Set or update a custom notification slot
+
+    Args:
+        user_id: User ID
+        slot: Slot index (0 or 1)
+        hours_before: Hours before quali closes (None to disable)
+        i18n: I18n context for translations (optional)
+
+    Returns:
+        (success, message)
+    """
+    # Import i18n context if not provided
+    if i18n is None:
+        from aiogram_i18n import I18nContext
+        try:
+            i18n = I18nContext.get_current(no_error=True)
+        except:
+            i18n = None
+
+    # Use i18n if available, fallback to English
+    def get_text(key, **kwargs):
+        if i18n:
+            return i18n.get(key, **kwargs)
+        return key
+
+    if slot < 0 or slot >= CUSTOM_NOTIF_MAX_SLOTS:
+        return False, get_text("validation-invalid-slot", maxSlots=CUSTOM_NOTIF_MAX_SLOTS-1)
+
+    # Validate hours if provided
+    if hours_before is not None:
+        is_valid, error_msg = validate_custom_notification_hours(hours_before, i18n)
+        if not is_valid:
+            return False, error_msg
+
+    from .user_data import get_user_status, get_default_custom_notifications, save_users_data
+    user_status = get_user_status(user_id)
+    custom_notifs = user_status.get('custom_notifications', get_default_custom_notifications())
+
+    # Ensure list has correct size
+    while len(custom_notifs) < CUSTOM_NOTIF_MAX_SLOTS:
+        custom_notifs.append({'enabled': False, 'hours_before': None})
+
+    # Update slot
+    if hours_before is None:
+        custom_notifs[slot] = {'enabled': False, 'hours_before': None}
+    else:
+        custom_notifs[slot] = {'enabled': True, 'hours_before': hours_before}
+
+    user_status['custom_notifications'] = custom_notifs
+    save_users_data()
+
+    time_str = format_custom_notification_time(hours_before)
+    logger.info(f"User {user_id} set custom notification {slot+1} to: {time_str}")
+    return True, get_text("custom-notif-set", slot=slot+1, time=time_str)

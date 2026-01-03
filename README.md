@@ -18,9 +18,10 @@ Telegram bot for Grand Prix Racing Online (GPRO) that sends qualification deadli
 
 ### Personalization
 - **Interactive onboarding:** New users select language and group during /start
-- **Language selection:** 31 supported languages for GPRO links
+- **Dual language support:** Bot UI in English/Russian + 31 languages for GPRO links
 - **Group settings:** Personalized race/replay links (Elite, Master 1-5, Pro, Amateur, Rookie)
 - **Notification preferences:** Toggle individual notification types on/off
+- **Full i18n support:** All messages, buttons, and notifications are localized
 
 ### Commands
 - `/status` - Next race with full details, qualifying link, and weather button
@@ -35,9 +36,8 @@ Telegram bot for Grand Prix Racing Online (GPRO) that sends qualification deadli
 - **Optimized notifications:** Adaptive check intervals based on race proximity
 - **Multi-user support:** Persistent user data with atomic writes
 
-## Planned featues
+## Planned features
 
-- i18n support
 - Timezone selection with DST support (pytz named timezones)
 
 # Hosting your own bot
@@ -98,15 +98,30 @@ ADMIN_USER_ID=your_telegram_id # to use admin commands
 
 ```
 gpro-bot/
-├── bot.py              # Main Aiogram bot + notification loop
-├── handlers.py         # Command handlers (/status, /settings)
-├── notifications.py    # check_notifications() loop
-├── gpro_calendar.py    # API fetch + cache
-├── config.py           # Load .env
+├── bot.py                      # Main Aiogram bot entry point
+├── config.py                   # Environment configuration
+├── gpro_calendar.py            # GPRO API integration & caching
+├── i18n_setup.py               # i18n middleware setup
+├── utils.py                    # Shared utilities (flags, formatting)
+├── handlers/                   # Command & callback handlers
+│   ├── __init__.py            # Router initialization
+│   ├── commands.py            # /start, /status, /calendar, etc.
+│   ├── callbacks.py           # Button interaction handlers
+│   ├── states.py              # FSM state handlers
+│   └── onboarding.py          # New user onboarding flow
+├── notifications/              # Notification system
+│   ├── __init__.py            # Module exports
+│   ├── user_data.py           # User data persistence
+│   ├── validation.py          # Custom notification validation
+│   ├── sender.py              # Notification sending functions
+│   └── checker.py             # Main notification loop
+├── locales/                    # i18n translations
+│   ├── en/                    # English
+│   └── ru/                    # Russian
 ├── requirements.txt
-├── .env.example		 # Rename to .env and fill in your data
-├── users_data.json     # User settings (auto)
-└── gpro_calendar.json  # Calendar downloaded after using /update (auto)
+├── .env.example               # Rename to .env and fill in your data
+├── users_data.json            # User settings (auto-generated)
+└── gpro_calendar.json         # Race calendar cache (auto-generated)
 ```
 
 ## Deployment (Ubuntu/Systemd)
