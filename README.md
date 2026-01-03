@@ -120,6 +120,7 @@ gpro-bot/
 │   └── ru/                    # Russian
 ├── requirements.txt
 ├── .env.example               # Rename to .env and fill in your data
+├── CLAUDE.md                  # Architecture docs for AI assistance
 ├── users_data.json            # User settings (auto-generated)
 └── gpro_calendar.json         # Race calendar cache (auto-generated)
 ```
@@ -165,6 +166,12 @@ pkill -f notifications.py
 source venv/bin/activate
 python bot.py
 ```
+
+### AI Assistance
+
+**CLAUDE.md** - Architecture documentation for [Claude Code](https://claude.ai/code)
+
+This file provides detailed architectural guidance including notification timing logic, data flow patterns, and common gotchas. Helpful when using AI assistance to understand or modify the codebase.
 
 ## API Integration
 
