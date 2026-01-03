@@ -7,11 +7,33 @@ Telegram bot for Grand Prix Racing Online (GPRO) that sends qualification deadli
 
 ## Features
 
-- Automatic notifications: 48h, 24h, 2h, 10min before quali closes
-- User button "✅ Quali Done" stops notifications until next race
-- Commands: `/status`, `/calendar`, `/notify`
-- Fetches GPRO calendar via API: `https://gpro.net/gb/backend/api/v2/Calendar`
-- Multi-user support with `users_data.json` persistence
+### Notifications
+- **Automatic quali notifications:** 48h, 24h, 2h, 10min before quali closes
+- **Custom notification times:** Set up to 2 custom notification times (20m-70h)
+- **Quali open detection:** API-based detection when qualification opens (2-3.5h after race)
+- **Race live notifications:** Get notified when race goes live
+- **Replay notifications:** Get notified when race replay is available
+- **Weather forecast:** Automatic weather data fetch when quali opens (Practice/Q1, Q2/Start, race quarters)
+- **User control:** "✅ Quali Done" button stops notifications for that race
+
+### Personalization
+- **Interactive onboarding:** New users select language and group during /start
+- **Language selection:** 31 supported languages for GPRO links
+- **Group settings:** Personalized race/replay links (Elite, Master 1-5, Pro, Amateur, Rookie)
+- **Notification preferences:** Toggle individual notification types on/off
+
+### Commands
+- `/status` - Next race with full details, qualifying link, and weather button
+- `/calendar` - Full season calendar with all 17 races
+- `/next` - Next season calendar (when published)
+- `/settings` - Configure language, group, and notification preferences
+
+### Technical
+- **API Integration:** Calendar, Office (quali detection), Practice (weather)
+- **Smart caching:** Weather data cached to minimize API calls
+- **Retry logic:** Automatic retry if weather fetch fails
+- **Optimized notifications:** Adaptive check intervals based on race proximity
+- **Multi-user support:** Persistent user data with atomic writes
 
 ## Planned featues
 
@@ -63,11 +85,13 @@ ADMIN_USER_ID=your_telegram_id # to use admin commands
 
 | Command | Description |
 |---------|-------------|
-| `/start` | Welcome + subscribe to notifications |
-| `/status` | Next race + time remaining |
-| `/calendar` | Full season calendar |
-| `/notify` | Test notification |
-| `/update` | Download current season calendar (admin only, once per season) |
+| `/start` | Interactive onboarding (language + group selection for new users) |
+| `/status` | Next race with full details, qualifying link, and weather forecast |
+| `/calendar` | Full season calendar (all 17 races) |
+| `/next` | Next season calendar (when published) |
+| `/settings` | Configure language, group, and notification preferences |
+| `/update` | Update calendar from API (admin only) |
+| `/weather` | Manually fetch weather data for testing (admin only) |
 | `/users` | See user list (admin only) |
 
 ## File Structure

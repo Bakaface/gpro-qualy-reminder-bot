@@ -416,62 +416,16 @@ async def cmd_settings(message: Message):
     )
 
 @router.message(Command("status"))
-async def cmd_status(message: Message):
-    status = get_user_status(message.from_user.id)
-    races_soon = get_races_closing_soon()
-
-    next_race = "No upcoming races"
-    next_race_id = None
-
-    if races_soon:
-        if isinstance(races_soon, dict) and races_soon:
-            race_data = list(races_soon.values())[0]
-            next_race_id = list(races_soon.keys())[0]
-            next_race = format_race_beautiful(race_data)
-        elif isinstance(races_soon, list) and len(races_soon) > 0:
-            race_data = races_soon[0]
-            next_race_id = race_data.get('race_id')
-            next_race = format_race_beautiful(race_data)
-
-    status_text = ""
-    completed_race = status.get('completed_quali')
-
-    if completed_race:
-        status_text = f"✅ **Quali {completed_race} done**\n*Next race notifications active*"
-    else:
-        status_text = "🔔 **Notifications active**"
-
-    text = (
-        f"🏁 **GPRO Status**\n\n"
-        f"🎯 **Next race:**\n{next_race}\n\n"
-        f"{status_text}"
-    )
-
-    # Show appropriate button based on status
-    if completed_race:
-        keyboard = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text=f"🔄 Re-enable Quali {completed_race} notifications", callback_data="reset_all")]
-        ])
-        await message.answer(text, reply_markup=keyboard, parse_mode='Markdown')
-    elif next_race_id:
-        # Show "Mark Quali Done" button for the upcoming race
-        keyboard = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text=f"✅ Mark Quali #{next_race_id} Done", callback_data=f"done_{next_race_id}")]
-        ])
-        await message.answer(text, reply_markup=keyboard, parse_mode='Markdown')
-    else:
-        await message.answer(text, parse_mode='Markdown')
-
-@router.message(Command("notify"))
-async def cmd_notify(message: Message, bot):
+async def cmd_status(message: Message, bot):
+    """Show next race status with full details including weather"""
     if not race_calendar:
         await message.answer("🔔 No races scheduled")
         return
-    
-    # FIXED: Sort by quali_close time to get TRUE next race
+
+    # Find next upcoming race
     now = datetime.utcnow()
     future_races = []
-    
+
     # Handle dict or list
     if isinstance(race_calendar, dict):
         for race_id, race_data in race_calendar.items():
@@ -483,14 +437,15 @@ async def cmd_notify(message: Message, bot):
             if isinstance(race_data, dict) and race_data.get('quali_close', now) > now:
                 race_id = race_data.get('race_id', i+1)
                 future_races.append((race_id, race_data))
-    
+
     # Sort by quali_close (earliest first)
     future_races.sort(key=lambda x: x[1].get('quali_close', now))
-    
+
     if future_races:
         next_race_id, next_race_data = future_races[0]  # First = soonest
+        # Send full notification with weather button and all details
         await send_quali_notification(bot, message.from_user.id, next_race_id, next_race_data, "manual")
-        logger.info(f"🔔 /notify sent for race {next_race_id} ({next_race_data.get('track', 'Unknown')}) to {message.from_user.id}")
+        logger.info(f"📊 /status sent for race {next_race_id} ({next_race_data.get('track', 'Unknown')}) to {message.from_user.id}")
     else:
         await message.answer("🔔 No upcoming qualifications")
 
@@ -622,7 +577,7 @@ async def cmd_weather(message: Message):
         await message.answer(
             f"ℹ️ Weather already cached for **Race #{next_race_id}: {track}**\n\n"
             f"Use `/weather force` to force update.\n"
-            f"Use /notify to see the notification with weather button.",
+            f"Use /status to see the notification with weather button.",
             parse_mode='Markdown'
         )
         return
@@ -640,7 +595,7 @@ async def cmd_weather(message: Message):
     if weather_data:
         await message.answer(
             f"✅ Weather data fetched for **Race #{next_race_id}: {track}**\n\n"
-            f"Use /notify to test the notification with weather button!",
+            f"Use /status to test the notification with weather button!",
             parse_mode='Markdown'
         )
     else:
