@@ -555,7 +555,7 @@ async def handle_custom_notifications_menu(callback: CallbackQuery, i18n: I18nCo
         hours_before = custom_notif.get('hours_before')
 
         if enabled and hours_before is not None:
-            time_str = format_custom_notification_time(hours_before)
+            time_str = format_custom_notification_time(hours_before, i18n)
             button_text = i18n.get("button-custom-slot-set", slot=slot_idx+1, time=time_str)
         else:
             button_text = i18n.get("button-custom-slot-empty", slot=slot_idx+1)

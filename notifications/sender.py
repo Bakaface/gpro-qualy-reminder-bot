@@ -351,13 +351,20 @@ async def send_quali_notification(bot: Bot, user_id: int, race_id: int, race_dat
             hours_left = race_data['hours_left']
 
         if hours_left >= 24:
-            time_text = f"{int(hours_left)}h"; emoji = "🔔"
+            hours = int(hours_left)
+            time_text = get_text("time-hours", hours=hours)
+            emoji = "🔔"
         elif hours_left >= 2:
-            time_text = f"{int(hours_left)}h"; emoji = "⏰"
+            hours = int(hours_left)
+            time_text = get_text("time-hours", hours=hours)
+            emoji = "⏰"
         elif hours_left >= 0.333:
-            time_text = "10min"; emoji = "⚠️"
+            time_text = get_text("time-minutes", minutes=10)
+            emoji = "⚠️"
         else:
-            time_text = f"{int(hours_left*60)}min"; emoji = "🚨"
+            minutes = int(hours_left * 60)
+            time_text = get_text("time-minutes", minutes=minutes)
+            emoji = "🚨"
 
         deadline = quali_close.strftime("%d.%m %H:%M UTC")
         race_time = race_date.strftime('%d.%m %H:%M UTC')

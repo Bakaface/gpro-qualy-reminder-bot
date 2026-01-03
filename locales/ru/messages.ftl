@@ -370,14 +370,54 @@ feedback-weather-sent = 🌤️ Прогноз погоды отправлен!
 # =======================
 # Форматирование времени
 # =======================
-time-minutes = { $minutes }м
-time-hours = { $hours }ч
-time-hours-minutes = { $hours }ч { $minutes }м
+time-minutes = { $minutes } { $minutes ->
+    [one] минута
+    [few] минуты
+   *[many] минут
+}
+time-hours = { $hours } { $hours ->
+    [one] час
+    [few] часа
+   *[many] часов
+}
+time-hours-minutes = { $hours } { $hours ->
+    [one] час
+    [few] часа
+   *[many] часов
+} { $minutes } { $minutes ->
+    [one] минута
+    [few] минуты
+   *[many] минут
+}
 time-hours-minutes-short = { $hours }ч{ $minutes }м
-time-days = { $days }д
-time-days-hours = { $days }д { $hours }ч
-time-months = { $months }мес
-time-months-days = { $months }мес { $days }д
+time-days = { $days } { $days ->
+    [one] день
+    [few] дня
+   *[many] дней
+}
+time-days-hours = { $days } { $days ->
+    [one] день
+    [few] дня
+   *[many] дней
+} { $hours } { $hours ->
+    [one] час
+    [few] часа
+   *[many] часов
+}
+time-months = { $months } { $months ->
+    [one] месяц
+    [few] месяца
+   *[many] месяцев
+}
+time-months-days = { $months } { $months ->
+    [one] месяц
+    [few] месяца
+   *[many] месяцев
+} { $days } { $days ->
+    [one] день
+    [few] дня
+   *[many] дней
+}
 
 # =======================
 # Отображение группы

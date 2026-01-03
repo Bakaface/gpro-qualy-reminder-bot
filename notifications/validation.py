@@ -103,27 +103,54 @@ def parse_time_input(time_str: str, i18n=None) -> tuple[float, str]:
     return None, get_text("validation-invalid-format")
 
 
-def format_custom_notification_time(hours: float) -> str:
+def format_custom_notification_time(hours: float, i18n=None) -> str:
     """Format hours into human-readable string
 
+    Args:
+        hours: Hours before quali closes
+        i18n: I18n context for translations (optional)
+
     Examples:
-        0.333 -> "20m"
-        1.5 -> "1h 30m"
-        12 -> "12h"
+        0.333 -> "20 minutes" (or "20м" in Russian)
+        1.5 -> "1 hour 30 minutes" (or "1 час 30 минут" in Russian)
+        12 -> "12 hours" (or "12 часов" in Russian)
+
+    Returns:
+        Formatted time string
     """
     if hours is None:
         return "Not set"
+
+    # Import i18n context if not provided
+    if i18n is None:
+        from aiogram_i18n import I18nContext
+        try:
+            i18n = I18nContext.get_current(no_error=True)
+        except:
+            i18n = None
+
+    # Helper to get i18n text or fallback to abbreviations
+    def get_text(key, **kwargs):
+        if i18n:
+            try:
+                return i18n.get(key, **kwargs)
+            except:
+                pass
+        return None
 
     total_minutes = hours * 60
     h = int(hours)
     m = int(total_minutes % 60)
 
     if h > 0 and m > 0:
-        return f"{h}h {m}m"
+        text = get_text("time-hours-minutes", hours=h, minutes=m)
+        return text if text else f"{h}h {m}m"
     elif h > 0:
-        return f"{h}h"
+        text = get_text("time-hours", hours=h)
+        return text if text else f"{h}h"
     else:
-        return f"{m}m"
+        text = get_text("time-minutes", minutes=m)
+        return text if text else f"{m}m"
 
 
 def get_custom_notifications(user_id: int) -> list:
@@ -189,6 +216,6 @@ def set_custom_notification(user_id: int, slot: int, hours_before: float, i18n=N
     user_status['custom_notifications'] = custom_notifs
     save_users_data()
 
-    time_str = format_custom_notification_time(hours_before)
+    time_str = format_custom_notification_time(hours_before, i18n)
     logger.info(f"User {user_id} set custom notification {slot+1} to: {time_str}")
     return True, get_text("custom-notif-set", slot=slot+1, time=time_str)

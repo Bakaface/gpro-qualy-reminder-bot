@@ -370,14 +370,44 @@ feedback-weather-sent = 🌤️ Weather forecast sent!
 # =======================
 # Time Formatting
 # =======================
-time-minutes = { $minutes }m
-time-hours = { $hours }h
-time-hours-minutes = { $hours }h { $minutes }m
+time-minutes = { $minutes ->
+    [one] { $minutes } minute
+   *[other] { $minutes } minutes
+}
+time-hours = { $hours ->
+    [one] { $hours } hour
+   *[other] { $hours } hours
+}
+time-hours-minutes = { $hours ->
+    [one] { $hours } hour
+   *[other] { $hours } hours
+} { $minutes ->
+    [one] { $minutes } minute
+   *[other] { $minutes } minutes
+}
 time-hours-minutes-short = { $hours }h{ $minutes }m
-time-days = { $days }d
-time-days-hours = { $days }d { $hours }h
-time-months = { $months }mo
-time-months-days = { $months }mo { $days }d
+time-days = { $days ->
+    [one] { $days } day
+   *[other] { $days } days
+}
+time-days-hours = { $days ->
+    [one] { $days } day
+   *[other] { $days } days
+} { $hours ->
+    [one] { $hours } hour
+   *[other] { $hours } hours
+}
+time-months = { $months ->
+    [one] { $months } month
+   *[other] { $months } months
+}
+time-months-days = { $months ->
+    [one] { $months } month
+   *[other] { $months } months
+} { $days ->
+    [one] { $days } day
+   *[other] { $days } days
+}
 
 # =======================
 # Group Display

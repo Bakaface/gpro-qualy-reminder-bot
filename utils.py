@@ -120,8 +120,16 @@ def format_group_display(group: str) -> str:
     return f"{group_names[letter]} - {number}"
 
 
-def format_time_until_quali(quali_close: datetime) -> str:
-    """Time remaining until quali deadline - human friendly"""
+def format_time_until_quali(quali_close: datetime, i18n=None) -> str:
+    """Time remaining until quali deadline - human friendly
+
+    Args:
+        quali_close: Qualification close datetime
+        i18n: Optional i18n context for translations
+
+    Returns:
+        Formatted time string (e.g., "2 hours 45 minutes" or "2h45m" if no i18n)
+    """
     now = datetime.utcnow()
     delta = quali_close - now
 
@@ -132,33 +140,51 @@ def format_time_until_quali(quali_close: datetime) -> str:
     total_hours = total_minutes / 60
     total_days = total_hours / 24
 
+    # Helper to get i18n text or fallback to abbreviations
+    def get_text(key, **kwargs):
+        if i18n:
+            try:
+                return i18n.get(key, **kwargs)
+            except:
+                pass
+        # Fallback to abbreviations if no i18n
+        return None
+
     if total_minutes < 100:  # Less than 100 minutes → show minutes or H:M
         hours = math.floor(total_minutes / 60)
         minutes = math.floor(total_minutes % 60)
         if hours > 0:
-            return f"{hours}h{minutes}m"  # "2h45m"
+            text = get_text("time-hours-minutes", hours=hours, minutes=minutes)
+            return text if text else f"{hours}h{minutes}m"
         else:
-            return f"{minutes}m"         # "45m"
+            text = get_text("time-minutes", minutes=minutes)
+            return text if text else f"{minutes}m"
     elif total_days >= 30:   # 30+ days → months + days
         months = math.floor(total_days / 30)
         remaining_days = math.floor(total_days % 30)
         if remaining_days > 0:
-            return f"{months}mo {remaining_days}d"  # "1m 5d"
+            text = get_text("time-months-days", months=months, days=remaining_days)
+            return text if text else f"{months}mo {remaining_days}d"
         else:
-            return f"{months}mo"                   # "1m"
+            text = get_text("time-months", months=months)
+            return text if text else f"{months}mo"
     elif total_hours >= 120:  # 5+ days → just days
         days = math.floor(total_hours / 24)
-        return f"{days}d"
+        text = get_text("time-days", days=days)
+        return text if text else f"{days}d"
     elif total_hours >= 24:   # 1+ day → "1d 14h"
         days = math.floor(total_hours / 24)
         remaining_hours = math.floor(total_hours % 24)
         if remaining_hours > 0:
-            return f"{days}d {remaining_hours}h"  # "1d 14h"
+            text = get_text("time-days-hours", days=days, hours=remaining_hours)
+            return text if text else f"{days}d {remaining_hours}h"
         else:
-            return f"{days}d"                   # "1d"
+            text = get_text("time-days", days=days)
+            return text if text else f"{days}d"
     else:
         hours = math.floor(total_hours)
-        return f"{hours}h"  # "23h"
+        text = get_text("time-hours", hours=hours)
+        return text if text else f"{hours}h"
 
 
 def format_race_beautiful(race_data: dict) -> str:
@@ -177,8 +203,18 @@ def format_race_beautiful(race_data: dict) -> str:
     return f"Qualification closes in {hours_display}h\n**({deadline})** - {track}"
 
 
-def format_full_calendar(calendar_data: dict, title: str = "Full Season", is_current_season: bool = True) -> str:
-    """Generic formatter for current/next season"""
+def format_full_calendar(calendar_data: dict, title: str = "Full Season", is_current_season: bool = True, i18n=None) -> str:
+    """Generic formatter for current/next season
+
+    Args:
+        calendar_data: Dictionary of race data
+        title: Title for the calendar
+        is_current_season: Whether this is the current season
+        i18n: Optional i18n context for translations
+
+    Returns:
+        Formatted calendar text
+    """
     if not calendar_data:
         return "No races scheduled"
 
@@ -210,7 +246,7 @@ def format_full_calendar(calendar_data: dict, title: str = "Full Season", is_cur
         race_id = race['race_id']
 
         date_str = race_date.strftime("%a %d.%m")
-        time_text = format_time_until_quali(quali_close)
+        time_text = format_time_until_quali(quali_close, i18n)
 
         time_info = date_str
         if time_text:

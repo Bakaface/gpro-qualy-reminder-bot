@@ -151,7 +151,7 @@ async def cmd_calendar(message: Message, state: FSMContext, i18n: I18nContext):
     """Show full race calendar"""
     # Clear any active state when command is issued
     await state.clear()
-    calendar_text = format_full_calendar(race_calendar, "Full Season", is_current_season=True)
+    calendar_text = format_full_calendar(race_calendar, "Full Season", is_current_season=True, i18n=i18n)
     title = i18n.get("calendar-title-full")
     text = f"{title}\n\n{calendar_text}"
     await message.answer(text, parse_mode='Markdown')
@@ -165,7 +165,7 @@ async def cmd_next(message: Message, i18n: I18nContext):
         await message.answer(i18n.get("next-season-not-published"))
         return
 
-    calendar_text = format_full_calendar(next_season_calendar, "Next Season", is_current_season=False)
+    calendar_text = format_full_calendar(next_season_calendar, "Next Season", is_current_season=False, i18n=i18n)
     title = i18n.get("calendar-title-next", count=len(next_season_calendar))
     text = f"{title}\n\n{calendar_text}"
     await message.answer(text, parse_mode='Markdown')
