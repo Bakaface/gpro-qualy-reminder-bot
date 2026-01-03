@@ -15,7 +15,11 @@ start-welcome-existing = 🏁 GPRO Bot LIVE!
     /next - Next season
     /settings - Preferences
 
-bot-live = 🏁 GPRO Bot LIVE!
+start-welcome-existing-buttons = 🏁 **GPRO Bot**
+
+    What would you like to do?
+
+bot-live = 🏁 **GPRO Bot**
 
 # =======================
 # Status & Calendar
@@ -40,7 +44,7 @@ onboard-group-custom = 🏁 **Custom Group**
 
     Enter your group in one of these formats:
     • **E** (Elite)
-    • **M3** (Master 3) - Master has groups 1-5
+    • **M3** (Master 3)
     • **P15** (Pro 15)
     • **A42** (Amateur 42)
     • **R11** (Rookie 11)
@@ -90,7 +94,7 @@ settings-group-title = 🏁 **Group Settings**
 
     Enter your group in one of these formats:
     • **E** (Elite)
-    • **M3** (Master 3) - Master has groups 1-5
+    • **M3** (Master 3)
     • **P15** (Pro 15)
     • **A42** (Amateur 42)
     • **R11** (Rookie 11)
@@ -167,6 +171,11 @@ button-disable-notification = 🔕 Disable This Notification
 button-cancel = ❌ Cancel
 button-got-it = ✅ Got it!
 button-try-again = 🔄 Try Again
+
+button-main-menu-status = 📊 Next Race
+button-main-menu-calendar = 📅 Full Season
+button-main-menu-next = 🌟 Next Season
+button-main-menu-settings = ⚙️ Settings
 
 button-group-elite = Elite
 button-group-master3 = Master 3
@@ -316,7 +325,7 @@ error-invalid-format = ❌ Invalid format!
 
     Please use:
     • **E** for Elite
-    • **M3** (Master 3) - Master has groups 1-5
+    • **M3** (Master 3)
     • **P15**, **A42**, **R11** etc.
 
     Try again:
@@ -482,7 +491,7 @@ group-menu-title = 🏁 **Group Settings**
 
     Enter your group in one of these formats:
     • **E** (Elite)
-    • **M3** (Master 3) - Master has groups 1-5
+    • **M3** (Master 3)
     • **P15** (Pro 15)
     • **A42** (Amateur 42)
     • **R11** (Rookie 11)

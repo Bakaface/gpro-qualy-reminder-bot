@@ -153,7 +153,7 @@ async def handle_onboarding_group_custom(callback: CallbackQuery, state: FSMCont
         "🏁 **Custom Group**\n\n"
         "Enter your group in one of these formats:\n"
         "• **E** (Elite)\n"
-        "• **M3** (Master 3) - Master has groups 1-5\n"
+        "• **M3** (Master 3)\n"
         "• **P15** (Pro 15)\n"
         "• **A42** (Amateur 42)\n"
         "• **R11** (Rookie 11)\n\n"

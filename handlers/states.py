@@ -42,7 +42,7 @@ async def process_group_input(message: Message, state: FSMContext):
             "❌ Invalid format!\n\n"
             "Please use:\n"
             "• **E** for Elite\n"
-            "• **M3** (Master 3) - Master has groups 1-5\n"
+            "• **M3** (Master 3)\n"
             "• **P15**, **A42**, **R11** etc.\n\n"
             "Try again:",
             parse_mode='Markdown'

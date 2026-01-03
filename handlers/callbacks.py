@@ -102,6 +102,128 @@ def build_language_keyboard(page: int = 1, current_lang: str = 'gb', onboarding:
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
+# ====================
+# Main Menu Handlers
+# ====================
+
+@router.callback_query(F.data == "main_menu_status")
+async def handle_main_menu_status(callback: CallbackQuery, i18n: I18nContext):
+    """Handle Status button from main menu"""
+    from .commands import cmd_status
+    from datetime import datetime
+
+    await callback.answer()
+
+    if not race_calendar:
+        await callback.message.answer(i18n.get("no-races-scheduled"))
+        return
+
+    # Find next upcoming race
+    now = datetime.utcnow()
+    future_races = []
+
+    if isinstance(race_calendar, dict):
+        for race_id, race_data in race_calendar.items():
+            if isinstance(race_data, dict) and race_data.get('quali_close', now) > now:
+                future_races.append((race_id, race_data))
+    else:
+        for i, race_data in enumerate(race_calendar):
+            if isinstance(race_data, dict) and race_data.get('quali_close', now) > now:
+                race_id = race_data.get('race_id', i+1)
+                future_races.append((race_id, race_data))
+
+    future_races.sort(key=lambda x: x[1].get('quali_close', now))
+
+    if future_races:
+        from notifications import send_quali_notification
+        next_race_id, next_race_data = future_races[0]
+        await send_quali_notification(callback.bot, callback.from_user.id, next_race_id, next_race_data, "manual", i18n)
+        logger.info(f"📊 Main menu status sent for race {next_race_id} to {callback.from_user.id}")
+    else:
+        await callback.message.answer(i18n.get("no-upcoming-qualifications"))
+
+
+@router.callback_query(F.data == "main_menu_calendar")
+async def handle_main_menu_calendar(callback: CallbackQuery, i18n: I18nContext):
+    """Handle Calendar button from main menu"""
+    from utils import format_full_calendar
+
+    await callback.answer()
+    calendar_text = format_full_calendar(race_calendar, "Full Season", is_current_season=True, i18n=i18n)
+    title = i18n.get("calendar-title-full")
+    text = f"{title}\n\n{calendar_text}"
+    await callback.message.answer(text, parse_mode='Markdown')
+
+
+@router.callback_query(F.data == "main_menu_next")
+async def handle_main_menu_next(callback: CallbackQuery, i18n: I18nContext):
+    """Handle Next Season button from main menu"""
+    from gpro_calendar import next_season_calendar, load_next_season_silent
+    from utils import format_full_calendar
+
+    await callback.answer()
+    await load_next_season_silent()
+
+    if not next_season_calendar:
+        await callback.message.answer(i18n.get("next-season-not-published"))
+        return
+
+    calendar_text = format_full_calendar(next_season_calendar, "Next Season", is_current_season=False, i18n=i18n)
+    title = i18n.get("calendar-title-next", count=len(next_season_calendar))
+    text = f"{title}\n\n{calendar_text}"
+    await callback.message.answer(text, parse_mode='Markdown')
+
+
+@router.callback_query(F.data == "main_menu_settings")
+async def handle_main_menu_settings(callback: CallbackQuery, state: FSMContext, i18n: I18nContext):
+    """Handle Settings button from main menu"""
+    await callback.answer()
+
+    user_id = callback.from_user.id
+    user_status = get_user_status(user_id)
+    current_ui_lang = user_status.get('ui_lang', 'en')
+    current_lang = user_status.get('gpro_lang', 'gb')
+    current_group = user_status.get('group')
+
+    # Build main settings menu
+    keyboard_buttons = []
+
+    # Bot UI Language button
+    ui_lang_display = "🇬🇧 English" if current_ui_lang == 'en' else "🇷🇺 Русский"
+    keyboard_buttons.append([InlineKeyboardButton(
+        text=i18n.get("button-ui-language", language=ui_lang_display),
+        callback_data="ui_lang_menu"
+    )])
+
+    # GPRO Website Language button
+    lang_display = LANGUAGE_OPTIONS.get(current_lang, current_lang)
+    keyboard_buttons.append([InlineKeyboardButton(
+        text=i18n.get("button-gpro-language", language=lang_display),
+        callback_data="lang_menu"
+    )])
+
+    # Group button
+    group_display = format_group_display(current_group)
+    keyboard_buttons.append([InlineKeyboardButton(
+        text=i18n.get("button-group", group=group_display),
+        callback_data="group_menu"
+    )])
+
+    # Notifications button
+    keyboard_buttons.append([InlineKeyboardButton(
+        text=i18n.get("button-notifications"),
+        callback_data="notif_menu"
+    )])
+
+    keyboard = InlineKeyboardMarkup(inline_keyboard=keyboard_buttons)
+
+    await callback.message.answer(
+        i18n.get("settings-title"),
+        reply_markup=keyboard,
+        parse_mode='Markdown'
+    )
+
+
 @router.callback_query(F.data.startswith("toggle_"))
 async def handle_toggle_notification(callback: CallbackQuery):
     """Handle notification toggle button clicks"""
