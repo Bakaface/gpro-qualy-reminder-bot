@@ -28,7 +28,7 @@ class OnboardingStates(StatesGroup):
 
 
 @router.message(SetGroupStates.waiting_for_group, F.text & ~F.text.startswith('/'))
-async def process_group_input(message: Message, state: FSMContext):
+async def process_group_input(message: Message, state: FSMContext, i18n: I18nContext):
     """Process user's group input from settings"""
     group_input = message.text.strip().upper()
 
@@ -39,12 +39,7 @@ async def process_group_input(message: Message, state: FSMContext):
         valid = True
     else:
         await message.answer(
-            "❌ Invalid format!\n\n"
-            "Please use:\n"
-            "• **E** for Elite\n"
-            "• **M3** (Master 3)\n"
-            "• **P15**, **A42**, **R11** etc.\n\n"
-            "Try again:",
+            i18n.get("error-invalid-format"),
             parse_mode='Markdown'
         )
         return
@@ -56,12 +51,11 @@ async def process_group_input(message: Message, state: FSMContext):
 
     # Show success with back to settings button
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="◀ Back to Settings", callback_data="settings_main")]
+        [InlineKeyboardButton(text=i18n.get("button-back-to-settings"), callback_data="settings_main")]
     ])
 
     await message.answer(
-        f"✅ **Group set to: {group_display}**\n\n"
-        f"Race and replay notifications will include direct links to your group!",
+        i18n.get("settings-group-set", group=group_display),
         reply_markup=keyboard,
         parse_mode='Markdown'
     )
@@ -117,7 +111,7 @@ async def process_custom_notification_time_input(message: Message, state: FSMCon
 
 
 @router.message(OnboardingStates.waiting_for_group, F.text & ~F.text.startswith('/'))
-async def process_onboarding_group_input(message: Message, state: FSMContext):
+async def process_onboarding_group_input(message: Message, state: FSMContext, i18n: I18nContext):
     """Process custom group input during onboarding"""
     user_id = message.from_user.id
     group_input = message.text.strip().upper()
@@ -129,12 +123,7 @@ async def process_onboarding_group_input(message: Message, state: FSMContext):
         valid = True
     else:
         await message.answer(
-            "❌ Invalid format!\n\n"
-            "Please use:\n"
-            "• **E** for Elite\n"
-            "• **M3** (Master 3)\n"
-            "• **P15**, **A42**, **R11** etc.\n\n"
-            "Try again or use /start to restart:",
+            i18n.get("error-invalid-format-onboarding"),
             parse_mode='Markdown'
         )
         return
@@ -146,18 +135,11 @@ async def process_onboarding_group_input(message: Message, state: FSMContext):
 
     # Show welcome complete message
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="✅ Got it!", callback_data="onboard_complete")]
+        [InlineKeyboardButton(text=i18n.get("button-got-it"), callback_data="onboard_complete")]
     ])
 
     await message.answer(
-        f"✅ **Setup Complete!**\n\n"
-        f"Group: **{group_display}**\n\n"
-        f"🏁 **GPRO Bot is ready!**\n\n"
-        f"**Available commands:**\n"
-        f"/status - Next race\n"
-        f"/calendar - Full season\n"
-        f"/next - Next season\n"
-        f"/settings - Preferences",
+        i18n.get("onboard-complete-with-group", group=group_display),
         reply_markup=keyboard,
         parse_mode='Markdown'
     )
