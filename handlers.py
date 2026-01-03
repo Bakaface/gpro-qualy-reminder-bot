@@ -7,8 +7,9 @@ from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from datetime import datetime
+from aiogram_i18n import I18nContext
 from gpro_calendar import race_calendar, next_season_calendar, get_races_closing_soon, update_calendar, load_next_season_silent, fetch_weather_from_api
-from notifications import get_user_status, mark_quali_done, reset_user_status, set_user_group, toggle_notification, is_notification_enabled, users_data, save_users_data, send_quali_notification, LANGUAGE_OPTIONS, set_user_language, get_user_language, get_custom_notifications, set_custom_notification, parse_time_input, format_custom_notification_time, CUSTOM_NOTIF_MIN_HOURS, CUSTOM_NOTIF_MAX_HOURS, format_weather_data
+from notifications import get_user_status, mark_quali_done, reset_user_status, set_user_group, toggle_notification, is_notification_enabled, users_data, save_users_data, send_quali_notification, LANGUAGE_OPTIONS, set_user_language, get_user_language, get_custom_notifications, set_custom_notification, parse_time_input, format_custom_notification_time, CUSTOM_NOTIF_MIN_HOURS, CUSTOM_NOTIF_MAX_HOURS, format_weather_data, set_user_ui_language, get_user_ui_language
 from config import ADMIN_USER_IDS
 
 logger = logging.getLogger(__name__)
@@ -251,22 +252,24 @@ def format_time_until_quali(quali_close):
         hours = math.floor(total_hours)
         return f"{hours}h"  # "23h"
 
-def build_language_keyboard(page: int = 1, current_lang: str = 'gb', onboarding: bool = False) -> InlineKeyboardMarkup:
+def build_language_keyboard(page: int = 1, current_lang: str = 'gb', onboarding: bool = False, i18n=None) -> InlineKeyboardMarkup:
     """Build paginated language selection keyboard
 
     Args:
         page: Page number (1-4)
         current_lang: User's current language code
         onboarding: If True, use onboarding callbacks and add Skip button
+        i18n: I18n context for translations (optional)
 
     Returns:
         InlineKeyboardMarkup with language options and navigation
     """
     # Language codes distributed across 4 pages (31 total)
+    # gb and ru appear first on page 1
     pages = [
-        ['gb', 'de', 'es', 'ro', 'it', 'fr', 'pl', 'bg'],
-        ['mk', 'nl', 'fi', 'hu', 'tr', 'gr', 'dk', 'pt'],
-        ['ru', 'rs', 'se', 'lt', 'ee', 'al', 'hr', 'ch'],
+        ['gb', 'ru', 'de', 'es', 'ro', 'it', 'fr', 'pl'],
+        ['bg', 'mk', 'nl', 'fi', 'hu', 'tr', 'gr', 'dk'],
+        ['pt', 'rs', 'se', 'lt', 'ee', 'al', 'hr', 'ch'],
         ['my', 'in', 'pi', 'be', 'br', 'cz', 'sk']
     ]
 
@@ -285,37 +288,47 @@ def build_language_keyboard(page: int = 1, current_lang: str = 'gb', onboarding:
 
     # Add reset button on last page (only in settings, not onboarding)
     if page == len(pages) and not onboarding:
+        reset_text = i18n.get("button-reset-language") if i18n else "🔄 Reset to Default (English)"
         buttons.append([InlineKeyboardButton(
-            text="🔄 Reset to Default (English)",
+            text=reset_text,
             callback_data="lang_reset_default"
         )])
 
     # Navigation footer
     footer = []
     if page > 1:
+        prev_text = i18n.get("button-previous") if i18n else "◀ Previous"
         if onboarding:
-            footer.append(InlineKeyboardButton(text="◀ Previous", callback_data=f"onboard_lang_page_{page-1}"))
+            footer.append(InlineKeyboardButton(text=prev_text, callback_data=f"onboard_lang_page_{page-1}"))
         else:
-            footer.append(InlineKeyboardButton(text="◀ Previous", callback_data=f"lang_page_{page-1}"))
+            footer.append(InlineKeyboardButton(text=prev_text, callback_data=f"lang_page_{page-1}"))
 
     if onboarding:
-        footer.append(InlineKeyboardButton(text="⏭️ Skip", callback_data="onboard_skip_lang"))
+        skip_text = i18n.get("button-skip") if i18n else "⏭️ Skip"
+        footer.append(InlineKeyboardButton(text=skip_text, callback_data="onboard_skip_lang"))
     else:
-        footer.append(InlineKeyboardButton(text="🏠 Main Menu", callback_data="lang_back_main"))
+        menu_text = i18n.get("button-main-menu") if i18n else "🏠 Main Menu"
+        footer.append(InlineKeyboardButton(text=menu_text, callback_data="lang_back_main"))
 
     if page < len(pages):
+        next_text = i18n.get("button-next") if i18n else "Next ▶"
         if onboarding:
-            footer.append(InlineKeyboardButton(text="Next ▶", callback_data=f"onboard_lang_page_{page+1}"))
+            footer.append(InlineKeyboardButton(text=next_text, callback_data=f"onboard_lang_page_{page+1}"))
         else:
-            footer.append(InlineKeyboardButton(text="Next ▶", callback_data=f"lang_page_{page+1}"))
+            footer.append(InlineKeyboardButton(text=next_text, callback_data=f"lang_page_{page+1}"))
 
     buttons.append(footer)
 
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
+# ============= COMMAND HANDLERS =============
+
 @router.message(Command("start"))
-async def cmd_start(message: Message):
+async def cmd_start(message: Message, state: FSMContext, i18n: I18nContext):
     user_id = message.from_user.id
+
+    # Clear any active state when command is issued
+    await state.clear()
 
     # Check BEFORE adding
     was_new = user_id not in users_data
@@ -323,21 +336,24 @@ async def cmd_start(message: Message):
 
     if was_new:
         logger.info(f"🆕 NEW user {user_id} registered via /start")
-        # Show interactive onboarding for new users
-        keyboard = build_language_keyboard(page=1, current_lang='gb', onboarding=True)
+        # Show bot UI language selection first (new step!)
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🇬🇧 English", callback_data="onboard_ui_lang_en")],
+            [InlineKeyboardButton(text="🇷🇺 Русский", callback_data="onboard_ui_lang_ru")]
+        ])
         await message.answer(
-            "👋 **Welcome to GPRO Bot!**\n\n"
-            "Let's get you set up. First, choose your preferred language for GPRO race links:\n\n"
-            "🌍 **Select your language** (or skip to use English):",
+            "👋 **Welcome to GPRO Bot!** / **Добро пожаловать в GPRO Bot!**\n\n"
+            "Choose your preferred bot language:\n"
+            "Выберите язык бота:",
             reply_markup=keyboard,
             parse_mode='Markdown'
         )
     else:
         logger.debug(f"👤 Existing user {user_id} used /start")
         # Show normal command list for existing users
-        await message.answer("🏁 GPRO Bot LIVE!\n/status - Next race\n/calendar - Full season\n/next - Next season\n/settings - Preferences")
+        await message.answer(i18n.get("start-welcome-existing"))
 
-@router.message(SetGroupStates.waiting_for_group)
+@router.message(SetGroupStates.waiting_for_group, F.text & ~F.text.startswith('/'))
 async def process_group_input(message: Message, state: FSMContext):
     """Process user's group input from settings"""
     group_input = message.text.strip().upper()
@@ -377,50 +393,63 @@ async def process_group_input(message: Message, state: FSMContext):
     )
 
 @router.message(Command("settings"))
-async def cmd_settings(message: Message):
+async def cmd_settings(message: Message, state: FSMContext, i18n: I18nContext):
     """Show main settings menu"""
+    # Clear any active state when command is issued
+    await state.clear()
+
     user_id = message.from_user.id
     user_status = get_user_status(user_id)
+    current_ui_lang = user_status.get('ui_lang', 'en')
     current_lang = user_status.get('gpro_lang', 'gb')
     current_group = user_status.get('group')
 
     # Build main settings menu
     keyboard_buttons = []
 
-    # Language button
+    # Bot UI Language button (NEW - first option)
+    ui_lang_display = "🇬🇧 English" if current_ui_lang == 'en' else "🇷🇺 Русский"
+    keyboard_buttons.append([InlineKeyboardButton(
+        text=i18n.get("button-ui-language", language=ui_lang_display),
+        callback_data="ui_lang_menu"
+    )])
+
+    # GPRO Website Language button
     lang_display = LANGUAGE_OPTIONS.get(current_lang, current_lang)
     keyboard_buttons.append([InlineKeyboardButton(
-        text=f"🌍 Language: {lang_display}",
+        text=i18n.get("button-gpro-language", language=lang_display),
         callback_data="lang_menu"
     )])
 
     # Group button
     group_display = format_group_display(current_group)
     keyboard_buttons.append([InlineKeyboardButton(
-        text=f"🏁 Group: {group_display}",
+        text=i18n.get("button-group", group=group_display),
         callback_data="group_menu"
     )])
 
     # Notifications button (opens sub-menu)
     keyboard_buttons.append([InlineKeyboardButton(
-        text="🔔 Notifications",
+        text=i18n.get("button-notifications"),
         callback_data="notif_menu"
     )])
 
     keyboard = InlineKeyboardMarkup(inline_keyboard=keyboard_buttons)
 
     await message.answer(
-        "⚙️ **Settings**\n\n"
-        "Configure your preferences:",
+        i18n.get("settings-title"),
         reply_markup=keyboard,
         parse_mode='Markdown'
     )
 
 @router.message(Command("status"))
-async def cmd_status(message: Message, bot):
+async def cmd_status(message: Message, bot, state: FSMContext, i18n: I18nContext):
     """Show next race status with full details including weather"""
+    # Clear any active state when command is issued
+    await state.clear()
+
     if not race_calendar:
-        await message.answer("🔔 No races scheduled")
+        await message.answer(i18n.get("no-races-scheduled"))
         return
 
     # Find next upcoming race
@@ -445,37 +474,42 @@ async def cmd_status(message: Message, bot):
     if future_races:
         next_race_id, next_race_data = future_races[0]  # First = soonest
         # Send full notification with weather button and all details
-        await send_quali_notification(bot, message.from_user.id, next_race_id, next_race_data, "manual")
+        await send_quali_notification(bot, message.from_user.id, next_race_id, next_race_data, "manual", i18n)
         logger.info(f"📊 /status sent for race {next_race_id} ({next_race_data.get('track', 'Unknown')}) to {message.from_user.id}")
     else:
-        await message.answer("🔔 No upcoming qualifications")
+        await message.answer(i18n.get("no-upcoming-qualifications"))
 
 @router.message(Command("calendar"))
-async def cmd_calendar(message: Message):
+async def cmd_calendar(message: Message, state: FSMContext, i18n: I18nContext):
+    """Show full race calendar"""
+    # Clear any active state when command is issued
+    await state.clear()
     calendar_text = format_full_calendar(race_calendar, "Full Season", is_current_season=True)
-    text = f"🏁 **Full Season**\n\n{calendar_text}"
+    title = i18n.get("calendar-title-full")
+    text = f"{title}\n\n{calendar_text}"
     await message.answer(text, parse_mode='Markdown')
 
 @router.message(Command("next"))
-async def cmd_next(message: Message):
+async def cmd_next(message: Message, i18n: I18nContext):
     await load_next_season_silent()
-    
+
     if not next_season_calendar:
-        await message.answer("🌟 **Next season not published yet**")
+        await message.answer(i18n.get("next-season-not-published"))
         return
-    
+
     calendar_text = format_full_calendar(next_season_calendar, "Next Season", is_current_season=False)
-    text = f"🌟 **NEXT SEASON** ({len(next_season_calendar)} races)\n\n{calendar_text}"
+    title = i18n.get("calendar-title-next", count=len(next_season_calendar))
+    text = f"{title}\n\n{calendar_text}"
     await message.answer(text, parse_mode='Markdown')
 
 @router.message(Command("schedule"))
-async def cmd_schedule(message: Message):
-    await cmd_calendar(message)
+async def cmd_schedule(message: Message, i18n: I18nContext):
+    await cmd_calendar(message, i18n)
 
 @router.message(Command("update"))
-async def cmd_update(message: Message):
+async def cmd_update(message: Message, i18n: I18nContext):
     if message.from_user.id not in ADMIN_USER_IDS:
-        await message.answer("❌ Admin only")
+        await message.answer(i18n.get("admin-only"))
         return
 
     await update_calendar()
@@ -487,30 +521,29 @@ async def cmd_update(message: Message):
 
     # Current season status
     await message.answer(
-        f"✅ **Calendar**: {len(race_calendar)} races\n"
-        f"🔄 **{reset_count} users** reset",
+        i18n.get("admin-calendar-updated", count=len(race_calendar), userCount=reset_count),
         parse_mode="Markdown",
     )
 
-    # Next season status (no file-removed text)
+    # Next season status
     if next_season_calendar:
         await message.answer(
-            f"🌟 **Next season ready!** {len(next_season_calendar)} races\nUse /next to view",
+            i18n.get("admin-next-season-ready", count=len(next_season_calendar)),
             parse_mode="Markdown",
         )
     else:
         await message.answer(
-            "ℹ️ **Next season not published**",
+            i18n.get("admin-next-season-not-published"),
             parse_mode="Markdown",
         )
 
 @router.message(Command("users"))
-async def cmd_users(message: Message):
+async def cmd_users(message: Message, i18n: I18nContext):
     logger.debug(f"USERS - User: {message.from_user.id} ({type(message.from_user.id)}), Admins: {ADMIN_USER_IDS}")
 
     if message.from_user.id not in ADMIN_USER_IDS:
         logger.warning(f"USERS: Access denied for user {message.from_user.id}")
-        await message.answer("❌ Admin only")
+        await message.answer(i18n.get("admin-only"))
         return
 
     logger.info("USERS: Admin access granted")
@@ -519,10 +552,11 @@ async def cmd_users(message: Message):
         logger.info(f"USERS: Loaded {len(users_data)} users from notifications")
 
         if not users_data:
-            await message.answer("📊 **0 users** in database", parse_mode='Markdown')
+            await message.answer(i18n.get("admin-users-none"), parse_mode='Markdown')
             return
 
-        text = f"📊 **{len(users_data)} users**:\n\n"
+        header = i18n.get("admin-users-count", count=len(users_data))
+        text = f"{header}\n\n"
         for uid, status in users_data.items():
             quali = status.get("completed_quali", "None")
             text += f"• `{uid}`: Race {quali}\n"
@@ -534,7 +568,7 @@ async def cmd_users(message: Message):
         await message.answer("❌ Error loading user data", parse_mode='Markdown')
 
 @router.message(Command("weather"))
-async def cmd_weather(message: Message):
+async def cmd_weather(message: Message, i18n: I18nContext):
     """Admin command to manually fetch weather data for next race
 
     Usage:
@@ -542,11 +576,11 @@ async def cmd_weather(message: Message):
         /weather force - Force fetch even if cached
     """
     if message.from_user.id not in ADMIN_USER_IDS:
-        await message.answer("❌ Admin only")
+        await message.answer(i18n.get("admin-only"))
         return
 
     if not race_calendar:
-        await message.answer("❌ No races in calendar", parse_mode='Markdown')
+        await message.answer(i18n.get("admin-no-races"), parse_mode='Markdown')
         return
 
     # Check for "force" argument
@@ -568,7 +602,7 @@ async def cmd_weather(message: Message):
             break
 
     if not next_race_id:
-        await message.answer("❌ No upcoming races found", parse_mode='Markdown')
+        await message.answer(i18n.get("admin-no-upcoming-races"), parse_mode='Markdown')
         return
 
     track = add_flag_to_track(next_race_data.get('track', f'Race {next_race_id}'))
@@ -576,33 +610,29 @@ async def cmd_weather(message: Message):
     # Check if weather already cached (skip if force update)
     if 'weather' in next_race_data and not force_update:
         await message.answer(
-            f"ℹ️ Weather already cached for **Race #{next_race_id}: {track}**\n\n"
-            f"Use `/weather force` to force update.\n"
-            f"Use /status to see the notification with weather button.",
+            i18n.get("weather-cached", raceId=next_race_id, track=track),
             parse_mode='Markdown'
         )
         return
 
     # Fetch weather
     if force_update and 'weather' in next_race_data:
-        await message.answer(f"🔄 Force updating weather for **Race #{next_race_id}: {track}**...", parse_mode='Markdown')
+        await message.answer(i18n.get("weather-force-updating", raceId=next_race_id, track=track), parse_mode='Markdown')
         # Clear cached weather to force fresh fetch
         del race_calendar[next_race_id]['weather']
     else:
-        await message.answer(f"🔄 Fetching weather for **Race #{next_race_id}: {track}**...", parse_mode='Markdown')
+        await message.answer(i18n.get("weather-fetching", raceId=next_race_id, track=track), parse_mode='Markdown')
 
     weather_data = await fetch_weather_from_api(next_race_id)
 
     if weather_data:
         await message.answer(
-            f"✅ Weather data fetched for **Race #{next_race_id}: {track}**\n\n"
-            f"Use /status to test the notification with weather button!",
+            i18n.get("weather-success", raceId=next_race_id, track=track),
             parse_mode='Markdown'
         )
     else:
         await message.answer(
-            f"❌ Failed to fetch weather data\n\n"
-            f"Check if GPRO API token is valid and Practice API is available.",
+            i18n.get("weather-failed"),
             parse_mode='Markdown'
         )
 
@@ -739,24 +769,22 @@ async def handle_weather(callback: CallbackQuery):
         await callback.answer("❌ Failed to send weather", show_alert=True)
 
 @router.callback_query(F.data == "lang_menu")
-async def handle_language_menu(callback: CallbackQuery):
+async def handle_language_menu(callback: CallbackQuery, i18n: I18nContext):
     """Open language selection menu (page 1)"""
     user_id = callback.from_user.id
     current_lang = get_user_language(user_id)
 
-    keyboard = build_language_keyboard(page=1, current_lang=current_lang)
+    keyboard = build_language_keyboard(page=1, current_lang=current_lang, i18n=i18n)
 
     await callback.message.edit_text(
-        f"🌍 **Language Settings**\n\n"
-        f"Current: {LANGUAGE_OPTIONS.get(current_lang, current_lang)}\n\n"
-        f"Select your preferred language for GPRO race links:",
+        i18n.get("lang-menu-title", currentLang=LANGUAGE_OPTIONS.get(current_lang, current_lang)),
         reply_markup=keyboard,
         parse_mode='Markdown'
     )
     await callback.answer()
 
 @router.callback_query(F.data.startswith("lang_page_"))
-async def handle_language_page(callback: CallbackQuery):
+async def handle_language_page(callback: CallbackQuery, i18n: I18nContext):
     """Handle language pagination"""
     user_id = callback.from_user.id
     current_lang = get_user_language(user_id)
@@ -767,13 +795,13 @@ async def handle_language_page(callback: CallbackQuery):
         await callback.answer("❌ Invalid page", show_alert=True)
         return
 
-    keyboard = build_language_keyboard(page=page, current_lang=current_lang)
+    keyboard = build_language_keyboard(page=page, current_lang=current_lang, i18n=i18n)
 
     await callback.message.edit_reply_markup(reply_markup=keyboard)
     await callback.answer()
 
 @router.callback_query(F.data.startswith("lang_") & ~F.data.in_(["lang_menu", "lang_back_main", "lang_reset_default"]))
-async def handle_language_select(callback: CallbackQuery):
+async def handle_language_select(callback: CallbackQuery, i18n: I18nContext):
     """Handle language selection"""
     user_id = callback.from_user.id
 
@@ -790,11 +818,11 @@ async def handle_language_select(callback: CallbackQuery):
 
         # Get current page to rebuild keyboard with updated selection
         current_lang = get_user_language(user_id)
-        # Determine which page this language is on
+        # Determine which page this language is on (updated order with gb and ru first)
         pages = [
-            ['gb', 'de', 'es', 'ro', 'it', 'fr', 'pl', 'bg'],
-            ['mk', 'nl', 'fi', 'hu', 'tr', 'gr', 'dk', 'pt'],
-            ['ru', 'rs', 'se', 'lt', 'ee', 'al', 'hr', 'ch'],
+            ['gb', 'ru', 'de', 'es', 'ro', 'it', 'fr', 'pl'],
+            ['bg', 'mk', 'nl', 'fi', 'hu', 'tr', 'gr', 'dk'],
+            ['pt', 'rs', 'se', 'lt', 'ee', 'al', 'hr', 'ch'],
             ['my', 'in', 'pi', 'be', 'br', 'cz', 'sk']
         ]
         current_page = 1
@@ -803,12 +831,10 @@ async def handle_language_select(callback: CallbackQuery):
                 current_page = i
                 break
 
-        keyboard = build_language_keyboard(page=current_page, current_lang=current_lang)
+        keyboard = build_language_keyboard(page=current_page, current_lang=current_lang, i18n=i18n)
 
         await callback.message.edit_text(
-            f"🌍 **Language Settings**\n\n"
-            f"Current: {lang_display}\n\n"
-            f"Select your preferred language for GPRO race links:",
+            i18n.get("lang-menu-title", currentLang=lang_display),
             reply_markup=keyboard,
             parse_mode='Markdown'
         )
@@ -817,17 +843,15 @@ async def handle_language_select(callback: CallbackQuery):
         await callback.answer("❌ Invalid language", show_alert=True)
 
 @router.callback_query(F.data == "lang_reset_default")
-async def handle_language_reset(callback: CallbackQuery):
+async def handle_language_reset(callback: CallbackQuery, i18n: I18nContext):
     """Reset language to default (English GB)"""
     user_id = callback.from_user.id
 
     if set_user_language(user_id, 'gb'):
-        keyboard = build_language_keyboard(page=1, current_lang='gb')
+        keyboard = build_language_keyboard(page=1, current_lang='gb', i18n=i18n)
 
         await callback.message.edit_text(
-            f"🌍 **Language Settings**\n\n"
-            f"Current: {LANGUAGE_OPTIONS['gb']}\n\n"
-            f"Select your preferred language for GPRO race links:",
+            i18n.get("lang-menu-title", currentLang=LANGUAGE_OPTIONS['gb']),
             reply_markup=keyboard,
             parse_mode='Markdown'
         )
@@ -835,42 +859,142 @@ async def handle_language_reset(callback: CallbackQuery):
     else:
         await callback.answer("❌ Reset failed", show_alert=True)
 
+@router.callback_query(F.data == "ui_lang_menu")
+async def handle_ui_language_menu(callback: CallbackQuery, i18n: I18nContext):
+    """Show bot UI language selection menu"""
+    user_id = callback.from_user.id
+    current_ui_lang = get_user_ui_language(user_id)
+
+    # Build UI language selection keyboard
+    keyboard_buttons = []
+
+    # English button
+    en_prefix = "✅ " if current_ui_lang == 'en' else ""
+    keyboard_buttons.append([InlineKeyboardButton(
+        text=f"{en_prefix}🇬🇧 English",
+        callback_data="set_ui_lang_en"
+    )])
+
+    # Russian button
+    ru_prefix = "✅ " if current_ui_lang == 'ru' else ""
+    keyboard_buttons.append([InlineKeyboardButton(
+        text=f"{ru_prefix}🇷🇺 Русский",
+        callback_data="set_ui_lang_ru"
+    )])
+
+    # Back button
+    keyboard_buttons.append([InlineKeyboardButton(
+        text=i18n.get("button-back"),
+        callback_data="settings_main"
+    )])
+
+    keyboard = InlineKeyboardMarkup(inline_keyboard=keyboard_buttons)
+
+    # Use localized text based on current language
+    if current_ui_lang == 'ru':
+        text = "💬 **Язык бота**\n\nВыберите язык интерфейса бота:"
+    else:
+        text = "💬 **Bot Language**\n\nSelect bot interface language:"
+
+    await callback.message.edit_text(text, reply_markup=keyboard, parse_mode='Markdown')
+    await callback.answer()
+
+@router.callback_query(F.data.startswith("set_ui_lang_"))
+async def handle_set_ui_language(callback: CallbackQuery):
+    """Handle bot UI language selection in settings"""
+    user_id = callback.from_user.id
+
+    # Extract language code
+    ui_lang = callback.data.replace("set_ui_lang_", "")
+
+    # Set UI language
+    if set_user_ui_language(user_id, ui_lang):
+        lang_display = "English" if ui_lang == 'en' else "Русский"
+
+        # Show feedback and rebuild menu with new language
+        await callback.answer(f"✅ Bot language set to {lang_display}")
+
+        # Rebuild UI language menu with updated selection
+        current_ui_lang = get_user_ui_language(user_id)
+
+        keyboard_buttons = []
+
+        # English button
+        en_prefix = "✅ " if current_ui_lang == 'en' else ""
+        keyboard_buttons.append([InlineKeyboardButton(
+            text=f"{en_prefix}🇬🇧 English",
+            callback_data="set_ui_lang_en"
+        )])
+
+        # Russian button
+        ru_prefix = "✅ " if current_ui_lang == 'ru' else ""
+        keyboard_buttons.append([InlineKeyboardButton(
+            text=f"{ru_prefix}🇷🇺 Русский",
+            callback_data="set_ui_lang_ru"
+        )])
+
+        # Back button (use appropriate language)
+        back_text = "◀ Назад" if current_ui_lang == 'ru' else "◀ Back"
+        keyboard_buttons.append([InlineKeyboardButton(
+            text=back_text,
+            callback_data="settings_main"
+        )])
+
+        keyboard = InlineKeyboardMarkup(inline_keyboard=keyboard_buttons)
+
+        # Update message with appropriate language
+        if current_ui_lang == 'ru':
+            text = "💬 **Язык бота**\n\nВыберите язык интерфейса бота:"
+        else:
+            text = "💬 **Bot Language**\n\nSelect bot interface language:"
+
+        await callback.message.edit_text(text, reply_markup=keyboard, parse_mode='Markdown')
+    else:
+        await callback.answer("❌ Invalid language", show_alert=True)
+
 @router.callback_query(F.data == "settings_main")
-async def handle_settings_main(callback: CallbackQuery):
+async def handle_settings_main(callback: CallbackQuery, i18n: I18nContext):
     """Return to main settings menu"""
     user_id = callback.from_user.id
     user_status = get_user_status(user_id)
+    current_ui_lang = user_status.get('ui_lang', 'en')
     current_lang = user_status.get('gpro_lang', 'gb')
     current_group = user_status.get('group')
 
     # Build main settings keyboard
     keyboard_buttons = []
 
-    # Language button
+    # Bot UI Language button (NEW)
+    ui_lang_display = "🇬🇧 English" if current_ui_lang == 'en' else "🇷🇺 Русский"
+    keyboard_buttons.append([InlineKeyboardButton(
+        text=i18n.get("button-ui-language", language=ui_lang_display),
+        callback_data="ui_lang_menu"
+    )])
+
+    # GPRO Website Language button
     lang_display = LANGUAGE_OPTIONS.get(current_lang, current_lang)
     keyboard_buttons.append([InlineKeyboardButton(
-        text=f"🌍 Language: {lang_display}",
+        text=i18n.get("button-gpro-language", language=lang_display),
         callback_data="lang_menu"
     )])
 
     # Group button
     group_display = format_group_display(current_group)
     keyboard_buttons.append([InlineKeyboardButton(
-        text=f"🏁 Group: {group_display}",
+        text=i18n.get("button-group", group=group_display),
         callback_data="group_menu"
     )])
 
     # Notifications button
     keyboard_buttons.append([InlineKeyboardButton(
-        text="🔔 Notifications",
+        text=i18n.get("button-notifications"),
         callback_data="notif_menu"
     )])
 
     keyboard = InlineKeyboardMarkup(inline_keyboard=keyboard_buttons)
 
     await callback.message.edit_text(
-        "⚙️ **Settings**\n\n"
-        "Configure your preferences:",
+        i18n.get("settings-title"),
         reply_markup=keyboard,
         parse_mode='Markdown'
     )
@@ -878,12 +1002,12 @@ async def handle_settings_main(callback: CallbackQuery):
 
 # Alias for backwards compatibility
 @router.callback_query(F.data == "lang_back_main")
-async def handle_language_back(callback: CallbackQuery):
+async def handle_language_back(callback: CallbackQuery, i18n: I18nContext):
     """Alias for returning to main settings"""
-    await handle_settings_main(callback)
+    await handle_settings_main(callback, i18n)
 
 @router.callback_query(F.data == "notif_menu")
-async def handle_notifications_menu(callback: CallbackQuery):
+async def handle_notifications_menu(callback: CallbackQuery, i18n: I18nContext):
     """Show notifications sub-menu"""
     user_id = callback.from_user.id
     user_status = get_user_status(user_id)
@@ -895,7 +1019,10 @@ async def handle_notifications_menu(callback: CallbackQuery):
     for notif_type, label in NOTIFICATION_LABELS.items():
         enabled = notifications.get(notif_type, True)
         icon = "✅" if enabled else "❌"
-        button_text = f"{icon} {label}"
+        # Get translated label
+        label_key = f"notif-label-{notif_type.replace('_', '-')}"
+        label_text = i18n.get(label_key)
+        button_text = f"{icon} {label_text}"
         keyboard_buttons.append([InlineKeyboardButton(
             text=button_text,
             callback_data=f"toggle_{notif_type}"
@@ -903,7 +1030,7 @@ async def handle_notifications_menu(callback: CallbackQuery):
 
     # Custom notifications button
     keyboard_buttons.append([InlineKeyboardButton(
-        text="⏱️ Custom Notifications",
+        text=i18n.get("button-custom-notifications"),
         callback_data="custom_notif_menu"
     )])
 
@@ -911,35 +1038,32 @@ async def handle_notifications_menu(callback: CallbackQuery):
     all_enabled = all(notifications.get(t, True) for t in NOTIFICATION_LABELS.keys())
     if all_enabled:
         keyboard_buttons.append([InlineKeyboardButton(
-            text="🔕 Disable All Notifications",
+            text=i18n.get("button-disable-all"),
             callback_data="toggle_all_off"
         )])
     else:
         keyboard_buttons.append([InlineKeyboardButton(
-            text="🔔 Enable All Notifications",
+            text=i18n.get("button-enable-all"),
             callback_data="toggle_all_on"
         )])
 
     # Back button
     keyboard_buttons.append([InlineKeyboardButton(
-        text="◀ Back",
+        text=i18n.get("button-back"),
         callback_data="settings_main"
     )])
 
     keyboard = InlineKeyboardMarkup(inline_keyboard=keyboard_buttons)
 
     await callback.message.edit_text(
-        "🔔 **Notification Settings**\n\n"
-        "Click to toggle notifications on/off:\n"
-        "✅ = Enabled | ❌ = Disabled\n\n"
-        "ℹ️ *These are global switches for all races. Use the 'Quali Done' button in notifications to disable a specific race.*",
+        i18n.get("notif-menu-title"),
         reply_markup=keyboard,
         parse_mode='Markdown'
     )
     await callback.answer()
 
 @router.callback_query(F.data == "custom_notif_menu")
-async def handle_custom_notifications_menu(callback: CallbackQuery):
+async def handle_custom_notifications_menu(callback: CallbackQuery, i18n: I18nContext):
     """Show custom notifications menu"""
     user_id = callback.from_user.id
     custom_notifs = get_custom_notifications(user_id)
@@ -953,9 +1077,9 @@ async def handle_custom_notifications_menu(callback: CallbackQuery):
 
         if enabled and hours_before is not None:
             time_str = format_custom_notification_time(hours_before)
-            button_text = f"⏱️ Custom {slot_idx+1}: {time_str}"
+            button_text = i18n.get("button-custom-slot-set", slot=slot_idx+1, time=time_str)
         else:
-            button_text = f"➕ Set Custom Notification {slot_idx+1}"
+            button_text = i18n.get("button-custom-slot-empty", slot=slot_idx+1)
 
         keyboard_buttons.append([InlineKeyboardButton(
             text=button_text,
@@ -964,7 +1088,7 @@ async def handle_custom_notifications_menu(callback: CallbackQuery):
 
     # Back button
     keyboard_buttons.append([InlineKeyboardButton(
-        text="◀ Back to Notifications",
+        text=i18n.get("button-back-to-notifications"),
         callback_data="notif_menu"
     )])
 
@@ -974,10 +1098,7 @@ async def handle_custom_notifications_menu(callback: CallbackQuery):
     max_time = int(CUSTOM_NOTIF_MAX_HOURS)  # Already in hours
 
     await callback.message.edit_text(
-        "⏱️ **Custom Notifications**\n\n"
-        f"Set your own notification times ({min_time}m - {max_time}h before quali closes).\n\n"
-        f"You can have up to 2 custom notifications.\n\n"
-        "Click a slot to set or edit it.",
+        i18n.get("custom-notif-menu-title", minTime=min_time, maxTime=max_time),
         reply_markup=keyboard,
         parse_mode='Markdown'
     )
@@ -1125,8 +1246,8 @@ async def handle_custom_notification_input_prompt(callback: CallbackQuery, state
     )
     await callback.answer()
 
-@router.message(CustomNotificationStates.waiting_for_time)
-async def process_custom_notification_time_input(message: Message, state: FSMContext):
+@router.message(CustomNotificationStates.waiting_for_time, F.text & ~F.text.startswith('/'))
+async def process_custom_notification_time_input(message: Message, state: FSMContext, i18n: I18nContext):
     """Process user's custom time input"""
     user_id = message.from_user.id
     time_input = message.text.strip()
@@ -1136,71 +1257,118 @@ async def process_custom_notification_time_input(message: Message, state: FSMCon
     slot_idx = state_data.get('slot_index', 0)
 
     # Parse time input
-    hours, error_msg = parse_time_input(time_input)
+    hours, error_msg = parse_time_input(time_input, i18n)
 
     if error_msg:
         await message.answer(
-            f"❌ **Error:** {error_msg}\n\n"
-            "Please try again with a valid format like: `2h`, `30m`, or `1h 30m`",
+            i18n.get("custom-notif-error-parsing", error=error_msg),
             parse_mode='Markdown'
         )
         return
 
     # Set custom notification
-    success, result_msg = set_custom_notification(user_id, slot_idx, hours)
+    success, result_msg = set_custom_notification(user_id, slot_idx, hours, i18n)
 
     # Clear state
     await state.clear()
 
     if success:
         keyboard = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="◀ Back to Custom Notifications", callback_data="custom_notif_menu")]
+            [InlineKeyboardButton(text=i18n.get("button-back-custom-notif"), callback_data="custom_notif_menu")]
         ])
 
         await message.answer(
-            f"✅ **{result_msg}**\n\n"
-            "Your custom notification has been set!",
+            i18n.get("custom-notif-success", message=result_msg),
             reply_markup=keyboard,
             parse_mode='Markdown'
         )
     else:
         keyboard = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="🔄 Try Again", callback_data=f"custom_notif_input_{slot_idx}")],
-            [InlineKeyboardButton(text="◀ Back", callback_data="custom_notif_menu")]
+            [InlineKeyboardButton(text=i18n.get("button-try-again"), callback_data=f"custom_notif_input_{slot_idx}")],
+            [InlineKeyboardButton(text=i18n.get("button-back"), callback_data="custom_notif_menu")]
         ])
 
         await message.answer(
-            f"❌ **Error:** {result_msg}\n\n"
-            "Please try again.",
+            i18n.get("custom-notif-error-setting", error=result_msg),
             reply_markup=keyboard,
             parse_mode='Markdown'
         )
 
 @router.callback_query(F.data == "group_menu")
-async def handle_group_menu(callback: CallbackQuery, state: FSMContext):
+async def handle_group_menu(callback: CallbackQuery, state: FSMContext, i18n: I18nContext):
     """Show group settings menu"""
     user_id = callback.from_user.id
     user_status = get_user_status(user_id)
     current_group = user_status.get('group')
     group_display = format_group_display(current_group)
 
+    # Build keyboard with back and reset buttons
+    keyboard_buttons = []
+
+    if current_group:
+        keyboard_buttons.append([InlineKeyboardButton(
+            text=i18n.get("button-reset-group"),
+            callback_data="group_reset"
+        )])
+
+    keyboard_buttons.append([InlineKeyboardButton(
+        text=i18n.get("button-back-to-settings"),
+        callback_data="settings_main"
+    )])
+
+    keyboard = InlineKeyboardMarkup(inline_keyboard=keyboard_buttons)
+
     # Prompt for group input
     await state.set_state(SetGroupStates.waiting_for_group)
     await callback.message.edit_text(
-        f"🏁 **Group Settings**\n\n"
-        f"Current group: **{group_display}**\n\n"
-        f"Enter your group in one of these formats:\n"
-        f"• **E** (Elite)\n"
-        f"• **M3** (Master 3) - Master has groups 1-5\n"
-        f"• **P15** (Pro 15)\n"
-        f"• **A42** (Amateur 42)\n"
-        f"• **R11** (Rookie 11)\n\n"
-        f"Numbers can be 1-3 digits.",
+        i18n.get("group-menu-title", groupDisplay=group_display),
+        reply_markup=keyboard,
         parse_mode='Markdown'
     )
     await callback.answer()
 
+@router.callback_query(F.data == "group_reset")
+async def handle_group_reset(callback: CallbackQuery, state: FSMContext, i18n: I18nContext):
+    """Reset group to default (remove data)"""
+    user_id = callback.from_user.id
+    set_user_group(user_id, None)
+    await state.clear()
+    await callback.answer(i18n.get("group-reset-success"), show_alert=True)
+    await handle_settings_main(callback, i18n)
+
 # ============= ONBOARDING HANDLERS =============
+
+@router.callback_query(F.data.startswith("onboard_ui_lang_"))
+async def handle_onboarding_ui_language_select(callback: CallbackQuery):
+    """Handle bot UI language selection at start of onboarding"""
+    user_id = callback.from_user.id
+
+    # Extract language code (en or ru)
+    ui_lang = callback.data.replace("onboard_ui_lang_", "")
+
+    # Set UI language
+    if set_user_ui_language(user_id, ui_lang):
+        logger.info(f"User {user_id} selected UI language: {ui_lang}")
+
+    # Now show GPRO language selection (existing flow)
+    keyboard = build_language_keyboard(page=1, current_lang='gb', onboarding=True)
+
+    # Use appropriate text based on selected UI language
+    if ui_lang == 'ru':
+        text = (
+            "👋 **Добро пожаловать в GPRO Bot!**\n\n"
+            "Теперь выберите предпочитаемый язык для ссылок на GPRO:\n\n"
+            "🌍 **Выберите язык** (или пропустите для английского):"
+        )
+    else:
+        text = (
+            "👋 **Welcome to GPRO Bot!**\n\n"
+            "Now choose your preferred language for GPRO race links:\n\n"
+            "🌍 **Select your language** (or skip to use English):"
+        )
+
+    await callback.message.edit_text(text, reply_markup=keyboard, parse_mode='Markdown')
+    await callback.answer()
 
 @router.callback_query(F.data.startswith("onboard_lang_page_"))
 async def handle_onboarding_language_page(callback: CallbackQuery):
@@ -1314,7 +1482,7 @@ async def handle_onboarding_group_custom(callback: CallbackQuery, state: FSMCont
     )
     await callback.answer()
 
-@router.message(OnboardingStates.waiting_for_group)
+@router.message(OnboardingStates.waiting_for_group, F.text & ~F.text.startswith('/'))
 async def process_onboarding_group_input(message: Message, state: FSMContext):
     """Process custom group input during onboarding"""
     user_id = message.from_user.id

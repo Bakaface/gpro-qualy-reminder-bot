@@ -185,7 +185,8 @@ def get_user_status(user_id: int) -> Dict:
             'group': None,
             'notifications': get_default_notification_preferences(),
             'custom_notifications': get_default_custom_notifications(),
-            'gpro_lang': DEFAULT_USER_LANG
+            'gpro_lang': DEFAULT_USER_LANG,
+            'ui_lang': 'en'  # Default UI language (separate from GPRO links language)
         }
         save_users_data()
     else:
@@ -207,6 +208,10 @@ def get_user_status(user_id: int) -> Dict:
         if 'gpro_lang' not in users_data[user_id]:
             users_data[user_id]['gpro_lang'] = DEFAULT_USER_LANG
             logger.debug(f"Added 'gpro_lang' field to user {user_id}")
+            needs_save = True
+        if 'ui_lang' not in users_data[user_id]:
+            users_data[user_id]['ui_lang'] = 'en'
+            logger.debug(f"Added 'ui_lang' field to user {user_id}")
             needs_save = True
 
         # Save only once if any migrations were applied
@@ -237,27 +242,42 @@ def is_notification_enabled(user_id: int, notification_type: str) -> bool:
     user_status = get_user_status(user_id)
     return user_status['notifications'].get(notification_type, True)
 
-def validate_custom_notification_hours(hours: float) -> tuple[bool, str]:
+def validate_custom_notification_hours(hours: float, i18n=None) -> tuple[bool, str]:
     """Validate custom notification time
 
     Args:
         hours: Hours before quali closes
+        i18n: I18n context for translations (optional)
 
     Returns:
         (is_valid, error_message)
     """
+    # Import i18n context if not provided
+    if i18n is None:
+        from aiogram_i18n import I18nContext
+        try:
+            i18n = I18nContext.get_current(no_error=True)
+        except:
+            i18n = None
+
+    # Use i18n if available, fallback to English
+    def get_text(key, **kwargs):
+        if i18n:
+            return i18n.get(key, **kwargs)
+        return key
+
     if hours is None:
-        return False, "Time cannot be empty"
+        return False, get_text("validation-time-empty")
 
     if hours < CUSTOM_NOTIF_MIN_HOURS:
-        return False, f"Minimum time is 20 minutes"
+        return False, get_text("validation-time-min")
 
     if hours > CUSTOM_NOTIF_MAX_HOURS:
-        return False, f"Maximum time is 70 hours"
+        return False, get_text("validation-time-max")
 
     return True, ""
 
-def parse_time_input(time_str: str) -> tuple[float, str]:
+def parse_time_input(time_str: str, i18n=None) -> tuple[float, str]:
     """Parse user time input into hours
 
     Supported formats:
@@ -265,11 +285,29 @@ def parse_time_input(time_str: str) -> tuple[float, str]:
     - "2h", "12 hours" -> hours
     - "1h 30m", "2h30m" -> hours + minutes
 
+    Args:
+        time_str: User input time string
+        i18n: I18n context for translations (optional)
+
     Returns:
         (hours_float, error_message)
     """
+    # Import i18n context if not provided
+    if i18n is None:
+        from aiogram_i18n import I18nContext
+        try:
+            i18n = I18nContext.get_current(no_error=True)
+        except:
+            i18n = None
+
+    # Use i18n if available, fallback to English
+    def get_text(key, **kwargs):
+        if i18n:
+            return i18n.get(key, **kwargs)
+        return key
+
     if not time_str:
-        return None, "Please enter a time"
+        return None, get_text("validation-enter-time")
 
     time_str = time_str.strip().lower()
 
@@ -293,7 +331,7 @@ def parse_time_input(time_str: str) -> tuple[float, str]:
         minutes = int(match.group(1))
         return minutes / 60, ""
 
-    return None, "Invalid format. Use: 2h, 30m, or 1h 30m"
+    return None, get_text("validation-invalid-format")
 
 def format_custom_notification_time(hours: float) -> str:
     """Format hours into human-readable string
@@ -317,23 +355,38 @@ def format_custom_notification_time(hours: float) -> str:
     else:
         return f"{m}m"
 
-def set_custom_notification(user_id: int, slot: int, hours_before: float) -> tuple[bool, str]:
+def set_custom_notification(user_id: int, slot: int, hours_before: float, i18n=None) -> tuple[bool, str]:
     """Set or update a custom notification slot
 
     Args:
         user_id: User ID
         slot: Slot index (0 or 1)
         hours_before: Hours before quali closes (None to disable)
+        i18n: I18n context for translations (optional)
 
     Returns:
         (success, message)
     """
+    # Import i18n context if not provided
+    if i18n is None:
+        from aiogram_i18n import I18nContext
+        try:
+            i18n = I18nContext.get_current(no_error=True)
+        except:
+            i18n = None
+
+    # Use i18n if available, fallback to English
+    def get_text(key, **kwargs):
+        if i18n:
+            return i18n.get(key, **kwargs)
+        return key
+
     if slot < 0 or slot >= CUSTOM_NOTIF_MAX_SLOTS:
-        return False, f"Invalid slot (must be 0-{CUSTOM_NOTIF_MAX_SLOTS-1})"
+        return False, get_text("validation-invalid-slot", maxSlots=CUSTOM_NOTIF_MAX_SLOTS-1)
 
     # Validate hours if provided
     if hours_before is not None:
-        is_valid, error_msg = validate_custom_notification_hours(hours_before)
+        is_valid, error_msg = validate_custom_notification_hours(hours_before, i18n)
         if not is_valid:
             return False, error_msg
 
@@ -355,7 +408,7 @@ def set_custom_notification(user_id: int, slot: int, hours_before: float) -> tup
 
     time_str = format_custom_notification_time(hours_before)
     logger.info(f"User {user_id} set custom notification {slot+1} to: {time_str}")
-    return True, f"Custom notification {slot+1} set to {time_str}"
+    return True, get_text("custom-notif-set", slot=slot+1, time=time_str)
 
 def get_custom_notifications(user_id: int) -> list:
     """Get user's custom notifications
@@ -402,6 +455,42 @@ def get_user_language(user_id: int) -> str:
     """
     user_status = get_user_status(user_id)
     return user_status.get('gpro_lang', DEFAULT_USER_LANG)
+
+def set_user_ui_language(user_id: int, lang: str) -> bool:
+    """Set user's preferred UI language for bot interface
+
+    Args:
+        user_id: Telegram user ID
+        lang: Language code (e.g., 'en', 'ru')
+
+    Returns:
+        bool: True if language was set successfully, False if invalid
+    """
+    # Validate UI language
+    valid_ui_langs = ['en', 'ru']
+    lang = lang.strip().lower()
+
+    if lang not in valid_ui_langs:
+        logger.warning(f"Invalid UI language code: {lang}")
+        return False
+
+    get_user_status(user_id)
+    users_data[user_id]['ui_lang'] = lang
+    save_users_data()
+    logger.info(f"User {user_id} set UI language to: {lang}")
+    return True
+
+def get_user_ui_language(user_id: int) -> str:
+    """Get user's preferred UI language for bot interface
+
+    Args:
+        user_id: Telegram user ID
+
+    Returns:
+        str: Language code (defaults to 'en' if not set)
+    """
+    user_status = get_user_status(user_id)
+    return user_status.get('ui_lang', 'en')
 
 def generate_gpro_link(group: str, lang: str = 'gb', link_type: str = 'live') -> str:
     """Generate GPRO race link based on group format and type
@@ -458,17 +547,32 @@ def generate_replay_link(group: str, lang: str = 'gb') -> str:
     """Generate race replay link - wrapper for backwards compatibility"""
     return generate_gpro_link(group, lang, 'replay')
 
-def format_weather_data(weather: dict) -> str:
+def format_weather_data(weather: dict, i18n=None) -> str:
     """Format weather data into human-readable text
 
     Args:
         weather: Weather data from Practice API
+        i18n: I18n context for translations (optional)
 
     Returns:
         str: Formatted weather message
     """
+    # Import i18n context if not provided
+    if i18n is None:
+        from aiogram_i18n import I18nContext
+        try:
+            i18n = I18nContext.get_current(no_error=True)
+        except:
+            i18n = None
+
+    # Use i18n if available, fallback to English
+    def get_text(key, **kwargs):
+        if i18n:
+            return i18n.get(key, **kwargs)
+        return key
+
     if not weather:
-        return "⚠️ Weather data not available"
+        return get_text("weather-unavailable")
 
     # Practice / Qualify 1
     q1_weather = weather.get('q1WeatherTransl', weather.get('q1Weather', 'Unknown'))
@@ -480,23 +584,23 @@ def format_weather_data(weather: dict) -> str:
     q2_temp = weather.get('q2Temp', '?')
     q2_hum = weather.get('q2Hum', '?')
 
-    message = "🌤️ **Race Weather Forecast**\n\n"
-    message += f"**Practice / Qualify 1:** {q1_weather}\n"
-    message += f"Temp: {q1_temp}°C • Humidity: {q1_hum}%\n\n"
-    message += f"**Qualify 2 / Race Start:** {q2_weather}\n"
-    message += f"Temp: {q2_temp}°C • Humidity: {q2_hum}%\n\n"
+    message = get_text("weather-title") + "\n\n"
+    message += get_text("weather-practice-q1", weather=q1_weather) + "\n"
+    message += get_text("weather-temp-hum", temp=q1_temp, hum=q1_hum) + "\n\n"
+    message += get_text("weather-q2-race-start", weather=q2_weather) + "\n"
+    message += get_text("weather-temp-hum", temp=q2_temp, hum=q2_hum) + "\n\n"
 
     # Race Quarters
-    message += "**Race Conditions:**\n"
+    message += get_text("weather-race-conditions") + "\n"
 
     quarters = [
-        ("Start - 0h30m", "raceQ1"),
-        ("0h30m - 1h00m", "raceQ2"),
-        ("1h00m - 1h30m", "raceQ3"),
-        ("1h30m - 2h00m", "raceQ4")
+        ("weather-start-0h30m", "raceQ1"),
+        ("weather-0h30m-1h00m", "raceQ2"),
+        ("weather-1h00m-1h30m", "raceQ3"),
+        ("weather-1h30m-2h00m", "raceQ4")
     ]
 
-    for label, prefix in quarters:
+    for label_key, prefix in quarters:
         temp_low = weather.get(f"{prefix}TempLow", '?')
         temp_high = weather.get(f"{prefix}TempHigh", '?')
         hum_low = weather.get(f"{prefix}HumLow", '?')
@@ -509,13 +613,13 @@ def format_weather_data(weather: dict) -> str:
         hum_str = f"{hum_low}%" if hum_low == hum_high else f"{hum_low}%-{hum_high}%"
         rain_str = f"{rain_low}%" if rain_low == rain_high else f"{rain_low}%-{rain_high}%"
 
-        message += f"\n**{label}:**\n"
-        message += f"Temp: {temp_str} • Humidity: {hum_str}\n"
-        message += f"Rain probability: {rain_str}\n"
+        message += f"\n{get_text(label_key)}\n"
+        message += get_text("weather-temp-hum-range", temp=temp_str, hum=hum_str) + "\n"
+        message += get_text("weather-rain-prob", rain=rain_str) + "\n"
 
     return message
 
-async def send_race_live_notification(bot: Bot, user_id: int, race_id: int, race_data: Dict):
+async def send_race_live_notification(bot: Bot, user_id: int, race_id: int, race_data: Dict, i18n=None):
     """Send notification when race goes live"""
     user_status = get_user_status(user_id)
     group = user_status.get('group')
@@ -527,21 +631,36 @@ async def send_race_live_notification(bot: Bot, user_id: int, race_id: int, race
 
     race_link = generate_race_link(group, user_lang)
 
+    # Import i18n context if not provided
+    if i18n is None:
+        from aiogram_i18n import I18nContext
+        try:
+            i18n = I18nContext.get_current(no_error=True)
+        except:
+            i18n = None
+
+    # Use i18n if available, fallback to English
+    def get_text(key, **kwargs):
+        if i18n:
+            return i18n.get(key, **kwargs)
+        return key
+
     # Build message based on whether group is set
     if group:
-        message = (
-            f"🏁 **Race #{race_id} is LIVE!**\n\n"
-            f"📍 **{track}**\n"
-            f"🕐 **{race_time}**\n\n"
-            f"🔗 [Watch Live Race]({race_link})"
+        message = get_text(
+            "notif-race-live",
+            raceId=race_id,
+            track=track,
+            raceTime=race_time,
+            raceLink=race_link
         )
     else:
-        message = (
-            f"🏁 **Race #{race_id} is LIVE!**\n\n"
-            f"📍 **{track}**\n"
-            f"🕐 **{race_time}**\n\n"
-            f"⚠️ Set your group in /settings for a direct link!\n\n"
-            f"🔗 [Watch Live Race]({race_link})"
+        message = get_text(
+            "notif-race-live-no-group",
+            raceId=race_id,
+            track=track,
+            raceTime=race_time,
+            raceLink=race_link
         )
 
     try:
@@ -550,7 +669,7 @@ async def send_race_live_notification(bot: Bot, user_id: int, race_id: int, race
     except Exception as e:
         logger.error(f"Race live notify {user_id} failed: {e}")
 
-async def send_race_replay_notification(bot: Bot, user_id: int, race_id: int, race_data: Dict):
+async def send_race_replay_notification(bot: Bot, user_id: int, race_id: int, race_data: Dict, i18n=None):
     """Send race replay notification when next quali opens"""
     user_status = get_user_status(user_id)
     group = user_status.get('group')
@@ -562,23 +681,36 @@ async def send_race_replay_notification(bot: Bot, user_id: int, race_id: int, ra
 
     replay_link = generate_replay_link(group, user_lang)
 
+    # Import i18n context if not provided
+    if i18n is None:
+        from aiogram_i18n import I18nContext
+        try:
+            i18n = I18nContext.get_current(no_error=True)
+        except:
+            i18n = None
+
+    # Use i18n if available, fallback to English
+    def get_text(key, **kwargs):
+        if i18n:
+            return i18n.get(key, **kwargs)
+        return key
+
     # Build message based on whether group is set
     if group:
-        message = (
-            f"📺 **Race #{race_id} Replay Available**\n\n"
-            f"📍 **{track}**\n"
-            f"🕐 **{race_time}**\n\n"
-            f"If the race has already been calculated, replay is available here:\n\n"
-            f"🔗 [Watch Replay]({replay_link})"
+        message = get_text(
+            "notif-race-replay",
+            raceId=race_id,
+            track=track,
+            raceTime=race_time,
+            replayLink=replay_link
         )
     else:
-        message = (
-            f"📺 **Race #{race_id} Replay Available**\n\n"
-            f"📍 **{track}**\n"
-            f"🕐 **{race_time}**\n\n"
-            f"If the race has already been calculated, replay is available here:\n\n"
-            f"⚠️ For personalized links, set your group in /settings!\n\n"
-            f"🔗 [Watch Replay]({replay_link})"
+        message = get_text(
+            "notif-race-replay-no-group",
+            raceId=race_id,
+            track=track,
+            raceTime=race_time,
+            replayLink=replay_link
         )
 
     try:
@@ -587,7 +719,7 @@ async def send_race_replay_notification(bot: Bot, user_id: int, race_id: int, ra
     except Exception as e:
         logger.error(f"Race replay notify {user_id} failed: {e}")
 
-async def send_race_results_notification(bot: Bot, user_id: int, race_id: int, race_data: Dict):
+async def send_race_results_notification(bot: Bot, user_id: int, race_id: int, race_data: Dict, i18n=None):
     """Send race results notification when next quali opens"""
     user_status = get_user_status(user_id)
     group = user_status.get('group')
@@ -604,24 +736,37 @@ async def send_race_results_notification(bot: Bot, user_id: int, race_id: int, r
     summary_link = generate_gpro_link(group, user_lang, 'replay')  # Use same format as replay
     summary_link = summary_link.replace('racescreen.asp', 'RaceSummary.asp')
 
+    # Import i18n context if not provided
+    if i18n is None:
+        from aiogram_i18n import I18nContext
+        try:
+            i18n = I18nContext.get_current(no_error=True)
+        except:
+            i18n = None
+
+    # Use i18n if available, fallback to English
+    def get_text(key, **kwargs):
+        if i18n:
+            return i18n.get(key, **kwargs)
+        return key
+
     # Build message based on whether group is set
     if group:
-        message = (
-            f"📊 **Race #{race_id} Results Available**\n\n"
-            f"📍 **{track}**\n"
-            f"🕐 **{race_time}**\n\n"
-            f"Race results are now available:\n\n"
-            f"🔗 [Race Analysis]({analysis_link})\n"
-            f"🔗 [Race Summary]({summary_link})"
+        message = get_text(
+            "notif-race-results",
+            raceId=race_id,
+            track=track,
+            raceTime=race_time,
+            analysisLink=analysis_link,
+            summaryLink=summary_link
         )
     else:
-        message = (
-            f"📊 **Race #{race_id} Results Available**\n\n"
-            f"📍 **{track}**\n"
-            f"🕐 **{race_time}**\n\n"
-            f"Race results are now available:\n\n"
-            f"🔗 [Race Analysis]({analysis_link})\n\n"
-            f"⚠️ For personalized Race Summary, set your group in /settings!"
+        message = get_text(
+            "notif-race-results-no-group",
+            raceId=race_id,
+            track=track,
+            raceTime=race_time,
+            analysisLink=analysis_link
         )
 
     try:
@@ -630,7 +775,7 @@ async def send_race_results_notification(bot: Bot, user_id: int, race_id: int, r
     except Exception as e:
         logger.error(f"Race results notify {user_id} failed: {e}")
 
-async def send_quali_notification(bot: Bot, user_id: int, race_id: int, race_data: Dict, notification_type: str = "deadline"):
+async def send_quali_notification(bot: Bot, user_id: int, race_id: int, race_data: Dict, notification_type: str = "deadline", i18n=None):
     user_status = get_user_status(user_id)
 
     # Skip automatic notifications if user marked quali done
@@ -645,9 +790,24 @@ async def send_quali_notification(bot: Bot, user_id: int, race_id: int, race_dat
     # Generate qualifying link
     quali_link = f"https://gpro.net/{user_lang}/Qualify.asp"
 
+    # Import i18n context if not provided
+    if i18n is None:
+        from aiogram_i18n import I18nContext
+        try:
+            i18n = I18nContext.get_current(no_error=True)
+        except:
+            i18n = None
+
+    # Use i18n if available, fallback to English
+    def get_text(key, **kwargs):
+        if i18n:
+            return i18n.get(key, **kwargs)
+        # Fallback to English (shouldn't happen, but safety)
+        return key
+
     if notification_type == "opens_soon":
         emoji = "🆕"
-        title = "**Quali is open (or is opening soon)**"
+        title = get_text("notif-quali-opens")
         deadline = quali_close.strftime("%d.%m %H:%M UTC")
         race_time = race_date.strftime('%d.%m %H:%M UTC')
     else:
@@ -668,7 +828,7 @@ async def send_quali_notification(bot: Bot, user_id: int, race_id: int, race_dat
 
         deadline = quali_close.strftime("%d.%m %H:%M UTC")
         race_time = race_date.strftime('%d.%m %H:%M UTC')
-        title = f"**Quali closes in {time_text}!**"
+        title = get_text("notif-quali-closes", time=time_text)
 
     # Check if user already marked this race done
     is_marked_done = user_status.get('completed_quali') == race_id
@@ -678,36 +838,39 @@ async def send_quali_notification(bot: Bot, user_id: int, race_id: int, race_dat
 
     if is_marked_done:
         keyboard_buttons = [
-            [InlineKeyboardButton(text=f"🔄 Re-enable Race {race_id} notifications", callback_data=f"reset_{race_id}")]
+            [InlineKeyboardButton(text=get_text("button-reenable-race", raceId=race_id), callback_data=f"reset_{race_id}")]
         ]
         if has_weather:
-            keyboard_buttons.append([InlineKeyboardButton(text="🌤️ Show Weather", callback_data=f"weather_{race_id}")])
+            keyboard_buttons.append([InlineKeyboardButton(text=get_text("button-weather"), callback_data=f"weather_{race_id}")])
 
         keyboard = InlineKeyboardMarkup(inline_keyboard=keyboard_buttons)
-        message = (
-            f"{emoji} {title}\n\n"
-            f"🏁 **Race #{race_id}**\n"
-            f"📍 **{track}**\n"
-            f"📅 **Quali: {deadline} | Race: {race_time}**\n\n"
-            f"🔗 [Go to Qualifying]({quali_link})\n\n"
-            f"ℹ️ **Automatic notifications disabled** for this race\n"
-            f"Click button to re-enable notifications"
+        message = get_text(
+            "notif-quali-message-disabled",
+            emoji=emoji,
+            title=title,
+            raceId=race_id,
+            track=track,
+            qualiDeadline=deadline,
+            raceTime=race_time,
+            qualiLink=quali_link
         )
     else:
         keyboard_buttons = [
-            [InlineKeyboardButton(text="✅ Quali Done", callback_data=f"done_{race_id}")]
+            [InlineKeyboardButton(text=get_text("button-quali-done"), callback_data=f"done_{race_id}")]
         ]
         if has_weather:
-            keyboard_buttons.append([InlineKeyboardButton(text="🌤️ Show Weather", callback_data=f"weather_{race_id}")])
+            keyboard_buttons.append([InlineKeyboardButton(text=get_text("button-weather"), callback_data=f"weather_{race_id}")])
 
         keyboard = InlineKeyboardMarkup(inline_keyboard=keyboard_buttons)
-        message = (
-            f"{emoji} {title}\n\n"
-            f"🏁 **Race #{race_id}**\n"
-            f"📍 **{track}**\n"
-            f"📅 **Quali: {deadline} | Race: {race_time}**\n\n"
-            f"🔗 [Go to Qualifying]({quali_link})\n\n"
-            f"Click button to disable notifications for this race"
+        message = get_text(
+            "notif-quali-message",
+            emoji=emoji,
+            title=title,
+            raceId=race_id,
+            track=track,
+            qualiDeadline=deadline,
+            raceTime=race_time,
+            qualiLink=quali_link
         )
 
     try:
