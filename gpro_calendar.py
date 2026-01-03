@@ -41,12 +41,18 @@ def _load_calendar_from_file(filepath: str) -> dict:
             calendar = {}
             for race_id_str, race_data in data.items():
                 race_id = int(race_id_str)
-                calendar[race_id] = {
+                race_entry = {
                     'quali_close': datetime.fromisoformat(race_data['quali_close']),
                     'track': race_data['track'],
                     'date': datetime.fromisoformat(race_data['date']),
                     'group': race_data.get('group', 'Pro')
                 }
+
+                # Load weather data if available
+                if 'weather' in race_data:
+                    race_entry['weather'] = race_data['weather']
+
+                calendar[race_id] = race_entry
             return calendar
     except FileNotFoundError:
         logger.warning(f"No cache file: {filepath}")
@@ -68,12 +74,18 @@ def _save_calendar_to_file(calendar: dict, filepath: str):
     """
     serializable = {}
     for k, v in calendar.items():
-        serializable[str(k)] = {
+        race_data = {
             'quali_close': v['quali_close'].isoformat(),
             'track': v['track'],
             'date': v['date'].isoformat(),
             'group': v['group']
         }
+
+        # Include weather data if available
+        if 'weather' in v:
+            race_data['weather'] = v['weather']
+
+        serializable[str(k)] = race_data
 
     temp_file = filepath + '.tmp'
     try:
@@ -377,6 +389,9 @@ async def fetch_weather_from_api(race_id: int) -> dict:
                         # Store weather data in race_calendar
                         if race_id in race_calendar:
                             race_calendar[race_id]['weather'] = weather_data
+                            # Save to file to persist weather across restarts
+                            save_calendar(race_calendar)
+                            logger.debug(f"Weather data persisted to file for race {race_id}")
                     else:
                         logger.warning(f"Weather API returned data but no 'weather' key found for race {race_id}")
 
