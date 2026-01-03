@@ -159,7 +159,8 @@ def get_default_notification_preferences():
         '10min': True,
         'opens_soon': True,
         'race_replay': True,
-        'race_live': True
+        'race_live': True,
+        'race_results': True
     }
 
 def get_default_custom_notifications():
@@ -586,6 +587,49 @@ async def send_race_replay_notification(bot: Bot, user_id: int, race_id: int, ra
     except Exception as e:
         logger.error(f"Race replay notify {user_id} failed: {e}")
 
+async def send_race_results_notification(bot: Bot, user_id: int, race_id: int, race_data: Dict):
+    """Send race results notification when next quali opens"""
+    user_status = get_user_status(user_id)
+    group = user_status.get('group')
+    user_lang = user_status.get('gpro_lang', DEFAULT_USER_LANG)
+
+    track = add_flag_to_track(race_data['track'])
+    race_date = race_data['date']
+    race_time = race_date.strftime('%d.%m %H:%M UTC')
+
+    # Race Analysis link (same for everyone, just language)
+    analysis_link = f"https://gpro.net/{user_lang}/RaceAnalysis.asp"
+
+    # Race Summary link (group-dependent)
+    summary_link = generate_gpro_link(group, user_lang, 'replay')  # Use same format as replay
+    summary_link = summary_link.replace('racescreen.asp', 'RaceSummary.asp')
+
+    # Build message based on whether group is set
+    if group:
+        message = (
+            f"📊 **Race #{race_id} Results Available**\n\n"
+            f"📍 **{track}**\n"
+            f"🕐 **{race_time}**\n\n"
+            f"Race results are now available:\n\n"
+            f"🔗 [Race Analysis]({analysis_link})\n"
+            f"🔗 [Race Summary]({summary_link})"
+        )
+    else:
+        message = (
+            f"📊 **Race #{race_id} Results Available**\n\n"
+            f"📍 **{track}**\n"
+            f"🕐 **{race_time}**\n\n"
+            f"Race results are now available:\n\n"
+            f"🔗 [Race Analysis]({analysis_link})\n\n"
+            f"⚠️ For personalized Race Summary, set your group in /settings!"
+        )
+
+    try:
+        await bot.send_message(user_id, message, parse_mode='Markdown')
+        logger.info(f"📊 Sent race results notification to {user_id} for race {race_id}")
+    except Exception as e:
+        logger.error(f"Race results notify {user_id} failed: {e}")
+
 async def send_quali_notification(bot: Bot, user_id: int, race_id: int, race_data: Dict, notification_type: str = "deadline"):
     user_status = get_user_status(user_id)
 
@@ -831,6 +875,12 @@ async def _check_quali_open_notifications(now: datetime) -> list:
                 prev_race_data = race_calendar[prev_race_id]
                 notifications.append(('replay', prev_race_id, prev_race_data, "race_replay", replay_history_key))
 
+            # Also send race results notification for the previous race
+            results_history_key = (prev_race_id, "race_results")
+            if results_history_key not in notify_history:
+                prev_race_data = race_calendar[prev_race_id]
+                notifications.append(('results', prev_race_id, prev_race_data, "race_results", results_history_key))
+
     # Fallback: Send notification if we've reached 3.5h without API detection
     for race_id, race_data, prev_race_id, hours_since in races_for_fallback:
         logger.info(f"⏰ Fallback: Sending quali open for race {race_id} at {hours_since:.1f}h (API didn't detect)")
@@ -860,6 +910,12 @@ async def _check_quali_open_notifications(now: datetime) -> list:
         if replay_history_key not in notify_history:
             prev_race_data = race_calendar[prev_race_id]
             notifications.append(('replay', prev_race_id, prev_race_data, "race_replay", replay_history_key))
+
+        # Also send race results notification for the previous race
+        results_history_key = (prev_race_id, "race_results")
+        if results_history_key not in notify_history:
+            prev_race_data = race_calendar[prev_race_id]
+            notifications.append(('results', prev_race_id, prev_race_data, "race_results", results_history_key))
 
     return notifications
 
@@ -927,6 +983,8 @@ async def _send_notifications_to_users(bot: Bot, notifications_to_send: list):
                             await send_race_replay_notification(bot, user_id, race_id, race_data)
                         elif notif_type == 'live':
                             await send_race_live_notification(bot, user_id, race_id, race_data)
+                        elif notif_type == 'results':
+                            await send_race_results_notification(bot, user_id, race_id, race_data)
                         sent_count += 1
                     except Exception as e:
                         logger.error(f"Failed to send {label} to user {user_id}: {e}")

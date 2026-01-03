@@ -22,7 +22,8 @@ NOTIFICATION_LABELS = {
     '10min': '10min before quali closes',
     'opens_soon': 'Quali is open',
     'race_replay': 'Race replay available',
-    'race_live': 'Race is live'
+    'race_live': 'Race is live',
+    'race_results': 'Race results available'
 }
 
 class SetGroupStates(StatesGroup):
